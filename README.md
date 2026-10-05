@@ -112,6 +112,8 @@ Satu pintu untuk seluruh alur JPG: rename `001_...` (in-place) → convert JPG k
 .\Orchestrate-Stock.ps1
 .\Orchestrate-Stock.ps1 -SourceDir "D:\batch1" -Force
 .\Orchestrate-Stock.ps1 -SourceDir "D:\b1","D:\b2","D:\b3" -Force
+# Full hands-free (tanpa prompt apa pun):
+.\Orchestrate-Stock.ps1 -SourceDir "D:\b1","D:\b2" -Target JPG -Scale 5 -Copyright "alamaby" -Creator "alamaby" -Force
 ```
 
 | Param | Keterangan |
