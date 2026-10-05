@@ -68,6 +68,47 @@ function Format-Size($Bytes) {
   return ("{0:N0} KB" -f ($Bytes / 1KB))
 }
 
+$script:ffprobeOk = [bool](Get-Command ffprobe -ErrorAction SilentlyContinue)
+function Test-ImageComplete($Path) {
+  # True bila penanda akhir file utuh (magic via ISI, bukan ekstensi -
+  # output Upscayl bernama .jpg tapi isinya PNG).
+  try {
+    $fs = [IO.File]::OpenRead($Path)
+    $len = $fs.Length
+    if ($len -lt 12) { $fs.Close(); return $false }
+    $h = New-Object byte[] 12
+    [void]$fs.Read($h, 0, 12)
+    $isJpg = ($h[0] -eq 0xFF -and $h[1] -eq 0xD8)
+    $isPng = ($h[0] -eq 0x89 -and $h[1] -eq 0x50 -and $h[2] -eq 0x4E -and $h[3] -eq 0x47)
+    $isWebp = ($h[0] -eq 0x52 -and $h[1] -eq 0x49 -and $h[2] -eq 0x46 -and $h[3] -eq 0x46 -and
+               $h[8] -eq 0x57 -and $h[9] -eq 0x45 -and $h[10] -eq 0x42 -and $h[11] -eq 0x50)
+    $ok = $false
+    if ($isJpg -and $len -ge 2) {
+      $fs.Seek(-2, [IO.SeekOrigin]::End) | Out-Null
+      $t = New-Object byte[] 2; [void]$fs.Read($t, 0, 2)
+      $ok = ($t[0] -eq 0xFF -and $t[1] -eq 0xD9)
+    } elseif ($isPng -and $len -ge 8) {
+      $fs.Seek(-8, [IO.SeekOrigin]::End) | Out-Null
+      $t = New-Object byte[] 8; [void]$fs.Read($t, 0, 8)
+      $ok = ($t[0] -eq 0x49 -and $t[1] -eq 0x45 -and $t[2] -eq 0x4E -and $t[3] -eq 0x44 -and
+             $t[4] -eq 0xAE -and $t[5] -eq 0x42 -and $t[6] -eq 0x60 -and $t[7] -eq 0x82)
+    } elseif ($isWebp -and $len -ge 12) {
+      $ok = (([BitConverter]::ToUInt32($h, 4) + 8) -eq $len)
+    }
+    $fs.Close()
+    return $ok
+  } catch { return $false }
+}
+function Test-MediaOk($Path) {
+  # Fail-open bila ffprobe tak ada: anggap OK (perilaku lama).
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  if (-not (Test-ImageComplete $Path)) { return $false }
+  if (-not $script:ffprobeOk) { return $true }
+  & ffprobe -v error -select_streams v:0 -show_entries stream=codec_name `
+    -of default=nw=1:nk=1 -- "$Path" 2>$null | Out-Null
+  return ($LASTEXITCODE -eq 0)
+}
+
 # ---------- validasi environment ----------
 if (-not (Test-Path -LiteralPath $Bin))       { Write-Host "upscayl-bin.exe tidak ditemukan: $Bin" -ForegroundColor Red; exit 1 }
 if (-not (Test-Path -LiteralPath $ModelsDir)) { Write-Host "Folder model tidak ditemukan: $ModelsDir" -ForegroundColor Red; exit 1 }
@@ -143,10 +184,14 @@ for ($idx = 0; $idx -lt $total; $idx++) {
   $dest = Join-Path $OutputDir $f.Name
   $num = "[{0}/{1}]" -f ($idx + 1), $total
 
-  if (Test-Path -LiteralPath $dest) {
+  $exists = Test-Path -LiteralPath $dest
+  if ($exists -and (-not $Force) -and (Test-MediaOk $dest)) {
     Write-Host "$num SKIP  $($f.Name) (sudah ada)  $(Show-Bar $done $total)" -ForegroundColor DarkGray
     $skipped++; $done++
     continue
+  }
+  if ($exists -and (-not $Force)) {
+    Write-Host "$num RUSAK (proses ulang): $($f.Name)" -ForegroundColor Yellow
   }
 
   Write-Host "$num PROSES $($f.Name) ($(Format-Size $f.Length))" -ForegroundColor White
@@ -175,7 +220,12 @@ for ($idx = 0; $idx -lt $total; $idx++) {
     $code = @($code)[-1]
 
     if ($code -eq 0 -and (Test-Path $TmpOut)) {
-      Copy-Item $TmpOut -Destination $dest -Force
+      # Salin via file sementara + pindah atomis agar interupsi
+      # tidak meninggalkan hasil setengah-jadi.
+      $tmpDest = "$dest.tmp"
+      Copy-Item $TmpOut -Destination $tmpDest -Force
+      Move-Item -LiteralPath $tmpDest -Destination $dest -Force
+      Remove-Item -LiteralPath $tmpDest -Force -ErrorAction SilentlyContinue
       $outSize = (Get-Item -LiteralPath $dest).Length
       $dur = $fileStopwatch.Elapsed.ToString('mm\:ss')
       Write-Host "`r   OK ${dur}  $(Format-Size $f.Length) -> $(Format-Size $outSize)      " -ForegroundColor Green

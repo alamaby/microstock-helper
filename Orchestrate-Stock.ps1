@@ -159,6 +159,36 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
   return [pscustomobject]@{ OK = $rows.Count; Failed = $failed }
 }
 
+function Get-ImageExtByMagic([string]$path) {
+  try {
+    $fs = [IO.File]::OpenRead($path); $mg = New-Object byte[] 12
+    $n = $fs.Read($mg, 0, 12); $fs.Close()
+    if ($n -ge 2 -and $mg[0] -eq 0xFF -and $mg[1] -eq 0xD8) { return ".jpg" }
+    if ($n -ge 4 -and $mg[0] -eq 0x89 -and $mg[1] -eq 0x50 -and $mg[2] -eq 0x4E -and $mg[3] -eq 0x47) { return ".png" }
+    if ($n -ge 12 -and $mg[0] -eq 0x52 -and $mg[1] -eq 0x49 -and $mg[2] -eq 0x46 -and $mg[3] -eq 0x46 -and
+        $mg[8] -eq 0x57 -and $mg[9] -eq 0x45 -and $mg[10] -eq 0x42 -and $mg[11] -eq 0x50) { return ".webp" }
+  } catch { }
+  return ""
+}
+
+function Restore-OrphanTmps([string]$dir) {
+  # Pulihkan sisa interupsi rename fase-1 (*.renametmp yatim): kembalikan
+  # ekstensi via magic bytes agar ikut penomoran normal. Return jumlah pulih.
+  $n = 0
+  foreach ($o in (Get-ChildItem -LiteralPath $dir -File -Filter "*.renametmp" -ErrorAction SilentlyContinue)) {
+    $ext = Get-ImageExtByMagic $o.FullName
+    if ($ext) {
+      $rn = Join-Path $dir ("recovered_" + [Guid]::NewGuid().ToString("N") + $ext)
+      Move-Item -LiteralPath $o.FullName -Destination $rn -Force
+      Write-Host ("  Pulihkan yatim -> {0}" -f (Split-Path $rn -Leaf)) -ForegroundColor Yellow
+      $n++
+    } else {
+      Write-Host ("  [!] yatim tak dikenal, dilewati: {0}" -f $o.Name) -ForegroundColor Yellow
+    }
+  }
+  return $n
+}
+
 function Process-Dir($DirInput, $Idx, $Total) {
   # Proses SATU direktori (dipanggil berurutan untuk antrean batch).
   $SourceDir = (Get-Item -LiteralPath $DirInput.Trim().Trim('"').Trim("'")).FullName
@@ -229,6 +259,7 @@ function Process-Dir($DirInput, $Idx, $Total) {
 
     # ---------- TAHAP 1: rename ----------
     Write-Stage 1 "Rename 001_... (in-place)"
+    $restored = Restore-OrphanTmps $SourceDir
     $imgs = @(Get-ChildItem -LiteralPath $SourceDir -File |
       Where-Object { $imgExt -contains $_.Extension.ToLower() } |
       Sort-Object CreationTime, Name)
@@ -273,7 +304,12 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $copied = 0
     foreach ($f in ($imgs | Where-Object { $_.Extension -match "^\.jpe?g$" })) {
       $dst = Join-Path $small $f.Name
-      if ((-not (Test-Path -LiteralPath $dst)) -or $Force) { Copy-Item -LiteralPath $f.FullName -Destination $dst -Force; $copied++ }
+      if ((-not (Test-Path -LiteralPath $dst)) -or $Force) {
+        $tmpC = "$dst.tmp"
+        Copy-Item -LiteralPath $f.FullName -Destination $tmpC -Force
+        Move-Item -LiteralPath $tmpC -Destination $dst -Force
+        $copied++
+      }
     }
     $nSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg").Count
     Write-Host ("  JPG kecil: {0} file (convert+copy)." -f $nSmall) -ForegroundColor Green

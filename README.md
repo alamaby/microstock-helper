@@ -124,7 +124,7 @@ Satu pintu untuk seluruh alur JPG: rename `001_...` (in-place) → convert JPG k
 | `-Copyright` / `-Creator` | Default `alamaby` |
 | `-Force` | Teruskan ke semua tahap (wajib untuk batch agar tak ada prompt) |
 
-Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan.
+Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan. Run ulang aman: file selesai di-skip, file korup/setengah-jadi otomatis diproses ulang, sisa interupsi rename (`.renametmp` yatim) dipulihkan otomatis.
 
 ## Alur kerja umum
 
