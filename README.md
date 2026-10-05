@@ -104,8 +104,31 @@ powershell -ExecutionPolicy Bypass -File Upscale.ps1
 
 Menangani batas MAX_PATH 260 karakter milik `upscayl-bin.exe` dengan memproses via nama pendek di TEMP. Tiap file ±1–1,5 menit (GPU `auto`; paksa `-g 1` di script bila butuh RTX 3050).
 
+## 6. Orchestrate-Stock — orkestrator AI image sampai siap upload
+
+Satu pintu untuk seluruh alur JPG: rename `001_...` (in-place) → convert JPG kecil → upscale 5x → convert JPG final → generate metadata API (dari JPG kecil) → embed ke `for_adobe/` + `for_dreamstime/`. Target `EPS` masih stub. Struktur kerja `_stock/` dibuat di dalam folder input; file sumber asli tidak diduplikasi keluar.
+
+```powershell
+.\Orchestrate-Stock.ps1
+.\Orchestrate-Stock.ps1 -SourceDir "D:\batch1" -Force
+.\Orchestrate-Stock.ps1 -SourceDir "D:\b1","D:\b2","D:\b3" -Force
+```
+
+| Param | Keterangan |
+|---|---|
+| `-Target` | `JPG` (default, via menu panah Up/Down + Enter) atau `EPS` (stub) |
+| `-SourceDir` | Satu atau banyak direktori (`"D:\b1","D:\b2"`); interaktif boleh koma |
+| `-Scale` | Skala upscale 2–5, default `5` |
+| `-Copyright` / `-Creator` | Default `alamaby` |
+| `-Force` | Teruskan ke semua tahap (wajib untuk batch agar tak ada prompt) |
+
+Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan.
+
 ## Alur kerja umum
+
+Manual per tahap (1→5), atau otomatis sekaligus via `Orchestrate-Stock`:
 
 ```
 Rename-Numbered → Upscale → Convert-*ToJpg → Embed-JpgMetadata
+Orchestrate-Stock (semua tahap JPG sekaligus)
 ```

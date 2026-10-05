@@ -135,7 +135,7 @@ function Test-RealFormat($path) {
 }
 
 # ---------- Proses utama ----------
-$rows = Import-Csv $CsvPath -Encoding UTF8
+$rows = @(Import-Csv $CsvPath -Encoding UTF8)
 $dirFiles = @(Get-ChildItem $JpgDir -File | Select-Object -ExpandProperty Name)
 if ($OutDir) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
 $ok = 0; $fail = 0; $i = 0
@@ -221,10 +221,13 @@ foreach ($r in $rows) {
 Write-Host ""
 Write-Host ""
 if ($fail -eq 0) {
-  Write-Host "  ____   ___  _   _ _____ " -ForegroundColor Green
+  Write-Host "  ____   ___  _   _ _____" -ForegroundColor Green
   Write-Host " |  _ \ / _ \| \ | | ____|" -ForegroundColor Green
-  Write-Host " | | | | | | |  \| |  _|  : $ok OK, $fail gagal dari $($rows.Count) baris." -ForegroundColor Green
+  Write-Host " | | | | | | |  \| |  _|" -ForegroundColor Green
+  Write-Host " | |_| | |_| | |\  | |___" -ForegroundColor Green
+  Write-Host " |____/ \___/|_| \_|_____|" -ForegroundColor Green
+  Write-Host ("  Selesai: {0} OK, {1} gagal dari {2} baris." -f $ok, $fail, $rows.Count) -ForegroundColor Green
 } else {
-  Write-Host "  Selesai: $ok OK, $fail gagal/skip dari $($rows.Count) baris." -ForegroundColor Yellow
+  Write-Host ("  Selesai: {0} OK, {1} gagal/skip dari {2} baris." -f $ok, $fail, $rows.Count) -ForegroundColor Yellow
 }
 if ($DryRun) { Write-Host "  (DryRun - ulangi tanpa -DryRun untuk tulis asli)" -ForegroundColor Cyan }
