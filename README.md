@@ -1,0 +1,111 @@
+# Microstock — Script Batch
+
+Kumpulan script PowerShell untuk alur kerja microstock (rename, upscale, convert, embed metadata).
+
+## Prasyarat
+
+| Kebutuhan | Dipakai oleh | Default |
+|---|---|---|
+| `ffmpeg` + `ffprobe` di PATH | `Convert-PngToJpg`, `Convert-WebpToJpg` | — |
+| ExifTool | `Embed-JpgMetadata` | `C:\Apps\exiftool\exiftool.exe` |
+| Upscayl CLI | `Upscale` | `C:\Program Files\Upscayl\...` |
+
+Bila Windows memblokir eksekusi script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\NamaScript.ps1
+```
+
+## 1. Rename-Numbered — penomoran file `001_...`
+
+Urutkan file dari paling lama ke paling baru (berdasar `CreationTime`), lalu rename menjadi `001_nama-asli.jpg`, `002_...`, dst. Hanya file langsung di folder (tidak recursive). Re-run aman (prefix `NNN_` lama dikupas dulu, tidak jadi dobel).
+
+```powershell
+.\Rename-Numbered.ps1
+.\Rename-Numbered.ps1 -Directory "D:\foto" -DryRun
+.\Rename-Numbered.ps1 -Directory "D:\foto" -Force
+```
+
+| Param | Keterangan |
+|---|---|
+| `-Directory` | Folder target (ditanya bila kosong) |
+| `-DryRun` | Pratinjau saja, tidak mengubah file |
+| `-Force` | Lewati konfirmasi (wajib untuk mode non-interaktif) |
+
+Rename berjalan 2 tahap (via nama sementara) agar aman dari tabrakan nama. Mendukung >999 file (otomatis jadi 1000, 1001, ...).
+
+## 2. Convert-WebpToJpg — WEBP ke JPG kualitas maksimal
+
+Konversi semua `*.webp` menjadi `*.jpg` (nama dipertahankan) via `ffmpeg -q:v 1`.
+
+```powershell
+.\Convert-WebpToJpg.ps1
+.\Convert-WebpToJpg.ps1 -SourceDir .\webp-1 -OutDir .\jpg-1
+.\Convert-WebpToJpg.ps1 -SourceDir .\a -OutDir .\b -Quality 2 -Force -Recurse
+```
+
+| Param | Keterangan |
+|---|---|
+| `-SourceDir` / `-OutDir` | Folder sumber / hasil (ditanya bila kosong) |
+| `-Quality` | Quantizer mjpeg 1–31, default `1` (terbaik) |
+| `-Force` | Timpa/proses ulang file yang sudah ada |
+| `-Recurse` | Sertakan subfolder |
+
+Catatan: transparan (alpha) di-flatten ke **putih** (standar microstock), file opaque tidak difilter; WebP animasi hanya diambil frame pertama; metadata EXIF/XMP dipertahankan; output yang sudah ada di-skip.
+
+## 3. Convert-PngToJpg — PNG ke JPG kualitas maksimal
+
+Sama seperti di atas, untuk `*.png` → `*.jpg` via `ffmpeg -q:v 1`.
+
+```powershell
+.\Convert-PngToJpg.ps1
+.\Convert-PngToJpg.ps1 -SourceDir .\upscaled-1 -OutDir .\jpg-1
+.\Convert-PngToJpg.ps1 -SourceDir .\a -OutDir .\b -Quality 2 -Force -Recurse
+```
+
+Param sama: `-SourceDir`, `-OutDir`, `-Quality` (1–31, default `1`), `-Force`, `-Recurse`.
+
+## 4. Embed-JpgMetadata — metadata Adobe Stock + Dreamstime
+
+Tulis Title/Description/Keywords/Copyright/Creator dari CSV ke file gambar via ExifTool (triple-sync IPTC+XMP+EXIF agar terbaca kedua agensi). Tanpa argumen = mode interaktif.
+
+```powershell
+.\Embed-JpgMetadata.ps1
+.\Embed-JpgMetadata.ps1 -CsvPath .\saudi_national_day\jpg-1_metadata_adobe.csv -JpgDir .\saudi_national_day\jpg-1 -OutDir .\saudi_national_day\jpg-1_for_adobe -DryRun
+```
+
+| Param | Keterangan |
+|---|---|
+| `-CsvPath` | CSV `SourceFile,Title,Description,Keywords,Copyright,Creator` |
+| `-JpgDir` | Folder sumber gambar |
+| `-OutDir` | Folder output (default: turunan folder sumber; kosongkan untuk tulis di tempat) |
+| `-ExifTool` | Path ExifTool |
+| `-DryRun` | Cek + validasi tanpa menulis |
+| `-KeepBackup` | Simpan file backup `_original` (default: timpa langsung) |
+
+Selalu mulai dengan `-DryRun`. Pencocokan file cerdas via nomor 3 digit bila nama CSV tidak persis sama. Batas: Title Adobe ideal ≤70 karakter, keywords Adobe maks 49 (frasa), Dreamstime ~80 kata tunggal.
+
+## 5. Upscale — upscale via Upscayl CLI
+
+Upscale semua image (`png/jpg/webp`) dalam satu folder memakai model `upscayl-standard-4x`. Melewati file yang sudah ada di output.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Upscale.ps1
+.\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Scale 5
+.\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Force
+```
+
+| Param | Keterangan |
+|---|---|
+| `-InputDir` / `-OutputDir` | Folder sumber / hasil (output dibuat otomatis) |
+| `-Scale` | 2–5, default `2` (4–5 terverifikasi; model selalu `-z 4`) |
+| `-Model` | Nama model Upscayl (default `upscayl-standard-4x`) |
+| `-Force` | Lanjut walau folder output sudah berisi file |
+
+Menangani batas MAX_PATH 260 karakter milik `upscayl-bin.exe` dengan memproses via nama pendek di TEMP. Tiap file ±1–1,5 menit (GPU `auto`; paksa `-g 1` di script bila butuh RTX 3050).
+
+## Alur kerja umum
+
+```
+Rename-Numbered → Upscale → Convert-*ToJpg → Embed-JpgMetadata
+```
