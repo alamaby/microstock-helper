@@ -1,0 +1,67 @@
+# secrets & local config
+.env
+.env.local
+*.env
+*.key
+*.pem
+
+# generated output dirs (per-batch for_*, output-*)
+output*/
+output-*/
+for_*/
+*_for_adobe/
+*_for_dreamstime/
+
+# exiftool backups
+*_original
+*_original.*
+
+# images (source & deliverables; heavy binaries)
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.tif
+*.tiff
+*.bmp
+*.gif
+*.svg
+*.ico
+*.psd
+
+# video / audio
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.mp3
+*.wav
+
+# documents
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+
+# archives & data dumps
+*.zip
+*.rar
+*.7z
+*.csv
+*.jsonl
+
+# python / tooling
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+node_modules/
+
+# OS / editor junk
+Thumbs.db
+.DS_Store
+*.bak
+*.tmp
+*~
