@@ -9,6 +9,8 @@ Kumpulan script PowerShell untuk alur kerja microstock (rename, upscale, convert
 | `ffmpeg` + `ffprobe` di PATH | `Convert-PngToJpg`, `Convert-WebpToJpg` | — |
 | ExifTool | `Embed-JpgMetadata` | `C:\Apps\exiftool\exiftool.exe` |
 | Upscayl CLI | `Upscale` | `C:\Program Files\Upscayl\...` |
+| vtracer CLI | `Trace-Svg` (jalur SVG/EPS) | `C:\Apps\vtracer.exe` |
+| Inkscape CLI | `Export-VectorPreview`, `Convert-SvgToEps` | `C:\Program Files\Inkscape\bin\inkscape.com` |
 
 Bila Windows memblokir eksekusi script:
 
@@ -106,7 +108,7 @@ Menangani batas MAX_PATH 260 karakter milik `upscayl-bin.exe` dengan memproses v
 
 ## 6. Orchestrate-Stock — orkestrator AI image sampai siap upload
 
-Satu pintu untuk seluruh alur JPG: rename `001_...` (in-place) → convert JPG kecil → upscale 5x → convert JPG final → generate metadata API (dari JPG kecil) → embed ke `for_adobe/` + `for_dreamstime/`. Target `EPS` masih stub. Struktur kerja `_stock/` dibuat di dalam folder input; file sumber asli tidak diduplikasi keluar.
+Satu pintu untuk seluruh alur: rename `001_...` (in-place) → convert JPG kecil → (cabang target) → generate metadata API (dari JPG kecil) → embed ke `for_adobe/` + `for_dreamstime/`. Struktur kerja `_stock/` dibuat di dalam folder input; file sumber asli tidak diduplikasi keluar.
 
 ```powershell
 .\Orchestrate-Stock.ps1
@@ -114,15 +116,27 @@ Satu pintu untuk seluruh alur JPG: rename `001_...` (in-place) → convert JPG k
 .\Orchestrate-Stock.ps1 -SourceDir "D:\b1","D:\b2","D:\b3" -Force
 # Full hands-free (tanpa prompt apa pun):
 .\Orchestrate-Stock.ps1 -SourceDir "D:\b1","D:\b2" -Target JPG -Scale 5 -Copyright "alamaby" -Creator "alamaby" -Force
+# Jalur vektor (SVG saja, atau EPS+JPG):
+.\Orchestrate-Stock.ps1 -SourceDir "D:\v1" -Target SVG -Force
+.\Orchestrate-Stock.ps1 -SourceDir "D:\v1" -Target EPS -PreviewWidth 6000 -Force
 ```
 
 | Param | Keterangan |
 |---|---|
-| `-Target` | `JPG` (default, via menu panah Up/Down + Enter) atau `EPS` (stub) |
+| `-Target` | `JPG` (default, via menu panah Up/Down + Enter), `SVG`, atau `EPS` |
 | `-SourceDir` | Satu atau banyak direktori (`"D:\b1","D:\b2"`); interaktif boleh koma |
-| `-Scale` | Skala upscale 2–5, default `5` |
+| `-Scale` | Skala upscale JPG 2–5, default `5` (jalur JPG saja) |
+| `-PreviewWidth` | Lebar render preview JPG vektor 1000–15000px, default `6000` (jalur SVG/EPS) |
 | `-Copyright` / `-Creator` | Default `alamaby` |
 | `-Force` | Teruskan ke semua tahap (wajib untuk batch agar tak ada prompt) |
+
+Cabang target:
+
+- `JPG`: convert JPG kecil → upscale 5x (Upscayl) → JPG final → embed triple-sync.
+- `SVG`: trace JPG kecil → SVG (`Trace-Svg`, vtracer color-cluster/cutout/spline) → render preview JPG besar dari SVG (Inkscape + ffmpeg) → embed (`Embed-VectorMetadata`): JPG triple-sync + SVG injeksi `<title>`/`<desc>`/RDF. Paket `for_adobe/` + `for_dreamstime/` berisi pasangan `.jpg`+`.svg` basename sama + salinan CSV agensi.
+- `EPS`: sama seperti SVG, ditambah SVG→EPS (Inkscape CLI). Paket berisi pasangan `.jpg`+`.eps` saja (SVG intermediate tidak dikirim). EPS di-embed XMP-dc via ExifTool.
+
+Catatan: ExifTool tidak mendukung tulis SVG, jadi metadata SVG adalah injeksi XML best-effort (CSV pendamping tetap sumber kebenaran). Uji upload 1 file per agensi dulu sebelum batch besar.
 
 Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan. Run ulang aman: file selesai di-skip, file korup/setengah-jadi otomatis diproses ulang, sisa interupsi rename (`.renametmp` yatim) dipulihkan otomatis.
 

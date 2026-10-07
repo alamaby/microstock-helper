@@ -89,3 +89,28 @@ Catatan:
 - File dengan ekstensi salah (isi PNG bernama `.jpg`, cpreview magic `89 50 4E 47`) ditolak exiftool (`Not a valid JPG`). Konversi dulu ke JPEG asli (PIL `RGB, quality=95, subsampling=0`) baru embed.
 - Di PowerShell, argumen berisi `>`, `<`, `$`, spasi wajib dikutip (`"<TAG><$src"` pakai kutip ganda, `'$...'` pakai kutip tunggal bila ada `$`).
 - ExifTool tahan long-path (>260 char), tidak seperti `upscayl-bin.exe`.
+
+## vtracer CLI (JPG kecil -> SVG, terverifikasi 2026-10-07)
+
+Binary: `C:\Apps\vtracer.exe` (v1.0.0-alpha.4). Flag baku yang dipakai `Trace-Svg.ps1`:
+`--clustering color-cluster --hierarchical cutout --mode spline`
+(petakan eksplisit: tidak ada flag `--compositing`/`--curve-splitting`; `cutout` = nilai `--hierarchical`, `spline` = nilai `--mode`).
+
+Catatan:
+- Trace dari JPG KECIL (bukan hasil upscale): vektor di-scale tak terbatas, file kecil = cepat + SVG ramping. Preview besar dibuat terpisah dari SVG (Inkscape, bukan Upscayl).
+- Pola batch `Trace-Svg.ps1`: skip bila SVG sudah ada dan valid (berisi `<svg`), tulis atomis via `.tmp`, workaround MAX_PATH via nama pendek di Temp (seperti `Upscale.ps1`).
+
+## Inkscape CLI (SVG -> preview JPG + EPS, terverifikasi 2026-10-07)
+
+Binary: `C:\Program Files\Inkscape\bin\inkscape.com` (1.4.3). Pakai `.com` (bukan `.exe`) untuk batch CLI.
+
+```powershell
+& "C:\Program Files\Inkscape\bin\inkscape.com" in.svg --export-type=png --export-width=6000 --export-filename=mid.png
+& "C:\Program Files\Inkscape\bin\inkscape.com" in.svg --export-type=eps --export-filename=out.eps
+```
+
+Catatan:
+- Preview: PNG render Inkscape lalu `ffmpeg -q:v 1` → JPG basename sama (`Export-VectorPreview.ps1`, default lebar 6000px).
+- Validasi EPS: file diawali `%!PS` (`25 21 50 53`).
+- **ExifTool TIDAK bisa tulis SVG** (`Error: ExifTool does not yet support writing of SVG images`) — metadata SVG di-injeksi sebagai XML native (`<title>`, `<desc>`, paket RDF/XMP di `<metadata>`) oleh `Embed-VectorMetadata.ps1` (best-effort; CSV pendamping tetap sumber kebenaran). **EPS BISA** ditulisi XMP-dc (`Title/Description/Subject/Rights/Creator`, pola 2 fase reset+tulis seperti JPG agar re-run idempoten — terverifikasi baca-balik).
+- Orkestrator: `.\Orchestrate-Stock.ps1 -Target SVG|EPS` (tahap 3V metadata → 4V trace → 5V preview → 6V EPS bila EPS → 7V embed paket `for_adobe/` + `for_dreamstime/` berisi pasangan basename-sama + salinan CSV). Paket EPS = `.eps`+`.jpg` saja; paket SVG = `.svg`+`.jpg`. Ganti target di tengah jalan otomatis membersihkan pasangan basi.

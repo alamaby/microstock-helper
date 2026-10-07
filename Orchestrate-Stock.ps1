@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Orkestrator microstock: dari image hasil generate AI sampai siap upload
-  Adobe Stock + Dreamstime (jalur JPG).
+  Adobe Stock + Dreamstime (jalur JPG/SVG/EPS).
 
 .DESCRIPTION
   Tahapan (jalur JPG):
@@ -15,8 +15,23 @@
                   Hasil jadi 2 CSV Adobe+Dreamstime.
     6. Embed      : metadata -> for_adobe/ + for_dreamstime/ (file upload).
 
-  Target EPS saat ini stub ("belum tersedia") - struktur disiapkan untuk cabang
-  EPS nanti.
+  Tahapan (jalur SVG / EPS - vektor dari raster):
+    0. Preflight  : cek ffmpeg, ExifTool, vtracer, Inkscape, script
+                  vektor, generator (tanpa Upscayl).
+    1. Rename     : sama seperti JPG.
+    2. Convert    : sama seperti JPG (JPG kecil = bahan trace + inference).
+    3. Metadata   : via inference API dari JPG KECIL -> 2 CSV.
+    4. Trace      : JPG kecil -> SVG ke _stock/05_svg (via vtracer,
+                  color-cluster/cutout/spline).
+    5. Preview    : SVG -> JPG besar ke _stock/06_preview_jpg (render
+                  Inkscape selebar PreviewWidth, lalu ffmpeg q:v 1).
+                  Basename SAMA dengan SVG.
+    6. EPS        : (jalur EPS saja) SVG -> EPS ke _stock/07_eps
+                  via Inkscape CLI. Paket EPS = .eps + .jpg saja.
+    7. Embed      : metadata -> for_adobe/ + for_dreamstime/ berisi
+                  pasangan (JPG+SVG atau JPG+EPS, basename sama) +
+                  salinan CSV agensi. JPG triple-sync, EPS XMP,
+                  SVG injeksi XML native (best-effort).
 
 .EXAMPLE
   .\Orchestrate-Stock.ps1
@@ -26,9 +41,10 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet("JPG", "EPS")][string]$Target = "",
+  [ValidateSet("JPG", "SVG", "EPS")][string]$Target = "",
   [string[]]$SourceDir = @(),
   [ValidateRange(2, 5)][int]$Scale = 5,
+  [ValidateRange(1000, 15000)][int]$PreviewWidth = 6000,
   [string]$Copyright = "alamaby",
   [string]$Creator = "alamaby",
   [switch]$Force
@@ -37,6 +53,8 @@ param(
 $ErrorActionPreference = "Stop"
 $BinExif = "C:\Apps\exiftool\exiftool.exe"
 $BinUpscayl = "C:\Program Files\Upscayl\resources\bin\upscayl-bin.exe"
+$BinVtracer = "C:\Apps\vtracer.exe"
+$BinInkscape = "C:\Program Files\Inkscape\bin\inkscape.com"
 $GenDir = Join-Path $PSScriptRoot "microstock-metadata-generator"
 $Stopwords = @("a", "an", "the", "and", "or", "but", "of", "on", "in", "at", "to",
   "for", "from", "with", "without", "by", "as", "is", "are", "was", "were", "be",
@@ -121,8 +139,10 @@ function Invoke-Child($File, [hashtable]$Arguments) {
 
 # ---------- Transform: generator CSV -> 2 CSV embed ----------
 function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator) {
-  $rows = Import-Csv $GenCsv -Encoding UTF8 | Where-Object { $_.status -eq "success" }
-  $failed = @(Import-Csv $GenCsv -Encoding UTF8 | Where-Object { $_.status -ne "success" }).Count
+  # Resume: baris "skipped" menyimpan metadata penuh (prior_items) dan
+  # tetap layak embed - hanya baris gagal/nyata yang dikecualikan.
+  $rows = Import-Csv $GenCsv -Encoding UTF8 | Where-Object { $_.status -in @("success", "skipped") }
+  $failed = @(Import-Csv $GenCsv -Encoding UTF8 | Where-Object { $_.status -notin @("success", "skipped") }).Count
   $adobe = @(); $dream = @()
   foreach ($r in $rows) {
     $phrases = @($r.keywords -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
@@ -201,11 +221,14 @@ function Process-Dir($DirInput, $Idx, $Total) {
   $small = Join-Path $stock "02_jpg_small"
   $up = Join-Path $stock "03_upscaled"
   $final = Join-Path $stock "04_final_jpg"
+  $svgDir = Join-Path $stock "05_svg"
+  $prevDir = Join-Path $stock "06_preview_jpg"
+  $epsDir = Join-Path $stock "07_eps"
   $metaDir = Join-Path $stock "metadata"
   $rawDir = Join-Path $metaDir "raw"
   $forAdobe = Join-Path $stock "for_adobe"
   $forDream = Join-Path $stock "for_dreamstime"
-  foreach ($d in @($stock, $small, $up, $final, $metaDir, $rawDir, $forAdobe, $forDream)) {
+  foreach ($d in @($stock, $small, $up, $final, $svgDir, $prevDir, $epsDir, $metaDir, $rawDir, $forAdobe, $forDream)) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
   }
   Start-Transcript -Path (Join-Path $stock "orchestrator.log") -Append | Out-Null
@@ -221,19 +244,26 @@ function Process-Dir($DirInput, $Idx, $Total) {
     )
     foreach ($l in $logo) { Write-Host $l -ForegroundColor Cyan }
     foreach ($l in $logo) { Write-Host ("    " + $l.TrimEnd()) -ForegroundColor DarkGray }
-    Write-Host "   AI image -> siap upload Adobe + Dreamstime (JPG, upscale ${Scale}x)" -ForegroundColor Yellow
+    Write-Host "   AI image -> siap upload Adobe + Dreamstime (Target: $Target)" -ForegroundColor Yellow
     Write-Host "  Sumber : $SourceDir" -ForegroundColor Gray
     Write-Host "  Kerja  : $stock" -ForegroundColor Gray
 
     $imgExt = @(".png", ".jpg", ".jpeg", ".webp")
 
     # ---------- TAHAP 0: preflight ----------
-    Write-Stage 0 "Preflight"
+    Write-Stage 0 "Preflight (Target $Target)"
     $fatal = @()
     if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { $fatal += "ffmpeg tidak di PATH" }
     if (-not (Test-Path -LiteralPath $BinExif -PathType Leaf)) { $fatal += "ExifTool tidak ada: $BinExif" }
-    if (-not (Test-Path -LiteralPath $BinUpscayl -PathType Leaf)) { $fatal += "upscayl-bin.exe tidak ada: $BinUpscayl" }
-    $need = @("Rename-Numbered.ps1", "Convert-PngToJpg.ps1", "Convert-WebpToJpg.ps1", "Upscale.ps1", "Embed-JpgMetadata.ps1")
+    if ($Target -eq "JPG") {
+      if (-not (Test-Path -LiteralPath $BinUpscayl -PathType Leaf)) { $fatal += "upscayl-bin.exe tidak ada: $BinUpscayl" }
+      $need = @("Rename-Numbered.ps1", "Convert-PngToJpg.ps1", "Convert-WebpToJpg.ps1", "Upscale.ps1", "Embed-JpgMetadata.ps1")
+    } else {
+      if (-not (Test-Path -LiteralPath $BinVtracer -PathType Leaf)) { $fatal += "vtracer.exe tidak ada: $BinVtracer" }
+      if (-not (Test-Path -LiteralPath $BinInkscape -PathType Leaf)) { $fatal += "inkscape.com tidak ada: $BinInkscape" }
+      $need = @("Convert-PngToJpg.ps1", "Convert-WebpToJpg.ps1", "Trace-Svg.ps1", "Export-VectorPreview.ps1", "Embed-VectorMetadata.ps1")
+      if ($Target -eq "EPS") { $need += "Convert-SvgToEps.ps1" }
+    }
     foreach ($n in $need) { if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $n) -PathType Leaf)) { $fatal += "script pendamping hilang: $n" } }
     if (-not (Test-Path -LiteralPath (Join-Path $GenDir ".venv\Scripts\python.exe"))) {
       $fatal += "generator venv tidak ada - jalankan setup.bat di microstock-metadata-generator dulu"
@@ -316,6 +346,7 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Add-Stage 2 "Convert kecil" "OK" "$nSmall file"
     if ($nSmall -eq 0) { throw "Tidak ada JPG kecil yang dihasilkan." }
 
+    if ($Target -eq "JPG") {
     # ---------- TAHAP 3: upscale ----------
     Write-Stage 3 ("Upscale {0}x" -f $Scale)
     $uargs = @{ InputDir = $small; OutputDir = $up; Scale = $Scale }
@@ -373,6 +404,81 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $nD = @(Get-ChildItem -LiteralPath $forDream -File -Filter "*.jpg").Count
     Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}." -f $nA, $nD) -ForegroundColor Green
     Add-Stage 6 "Embed" "OK" "Adobe=$nA, Dreamstime=$nD"
+    } else {
+    # ---------- TAHAP 3V: metadata vektor (dari JPG kecil) ----------
+    Write-Stage 3 "Generate metadata (dari JPG kecil)"
+    $runBat = Join-Path $GenDir "run.bat"
+    $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $MetadataBackend"
+    Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
+    cmd /c $genCmd
+    if ($LASTEXITCODE -ne 0) { throw "Generate metadata gagal (exit $LASTEXITCODE) - lihat $rawDir\processing.log." }
+    $genCsv = Join-Path $rawDir "metadata.csv"
+    if (-not (Test-Path -LiteralPath $genCsv)) { throw "metadata.csv tidak ditemukan di $rawDir." }
+    $batch = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
+    $adobeCsv = Join-Path $metaDir ($batch + "_metadata_adobe.csv")
+    $dreamCsv = Join-Path $metaDir ($batch + "_metadata_dreamstime.csv")
+    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator
+    Write-Host ("  Metadata: {0} OK, {1} gagal -> {2}" -f $m.OK, $m.Failed, $metaDir) -ForegroundColor Green
+    Add-Stage 3 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
+    if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
+
+    # ---------- TAHAP 4V: trace ----------
+    Write-Stage 4 "Trace JPG kecil -> SVG (vtracer)"
+    $targs = @{ InputDir = $small; OutDir = $svgDir }
+    if ($Force) { $targs.Force = $true }
+    $code = Invoke-Child (Join-Path $PSScriptRoot "Trace-Svg.ps1") $targs
+    if ($code -ne 0) { throw "Trace SVG gagal (exit $code)." }
+    $nSvg = @(Get-ChildItem -LiteralPath $svgDir -File -Filter "*.svg").Count
+    Write-Host ("  SVG: {0} file." -f $nSvg) -ForegroundColor Green
+    Add-Stage 4 "Trace SVG" "OK" "$nSvg file"
+    if ($nSvg -eq 0) { throw "Trace tidak menghasilkan SVG." }
+
+    # ---------- TAHAP 5V: preview JPG besar ----------
+    Write-Stage 5 ("Render preview JPG (lebar {0}px)" -f $PreviewWidth)
+    $pargs = @{ SvgDir = $svgDir; OutDir = $prevDir; Width = $PreviewWidth }
+    if ($Force) { $pargs.Force = $true }
+    $code = Invoke-Child (Join-Path $PSScriptRoot "Export-VectorPreview.ps1") $pargs
+    if ($code -ne 0) { throw "Render preview gagal (exit $code)." }
+    $nPrev = @(Get-ChildItem -LiteralPath $prevDir -File -Filter "*.jpg").Count
+    Write-Host ("  Preview: {0} file." -f $nPrev) -ForegroundColor Green
+    Add-Stage 5 "Preview JPG" "OK" "$nPrev file"
+    if ($nPrev -eq 0) { throw "Tidak ada JPG preview." }
+
+    # ---------- TAHAP 6V: EPS (jalur EPS saja; paket = .eps + .jpg) ----------
+    $vecSrc = $svgDir; $vecKind = "svg"; $vecFilter = "*.svg"
+    if ($Target -eq "EPS") {
+      Write-Stage 6 "Convert SVG -> EPS (Inkscape)"
+      $eargs = @{ SvgDir = $svgDir; OutDir = $epsDir }
+      if ($Force) { $eargs.Force = $true }
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-SvgToEps.ps1") $eargs
+      if ($code -ne 0) { throw "Convert EPS gagal (exit $code)." }
+      $nEps = @(Get-ChildItem -LiteralPath $epsDir -File -Filter "*.eps").Count
+      Write-Host ("  EPS: {0} file." -f $nEps) -ForegroundColor Green
+      Add-Stage 6 "SVG->EPS" "OK" "$nEps file"
+      if ($nEps -eq 0) { throw "Tidak ada EPS yang dihasilkan." }
+      $vecSrc = $epsDir; $vecKind = "eps"; $vecFilter = "*.eps"
+    }
+
+    # ---------- TAHAP 7V: embed paket vektor ----------
+    Write-Stage 7 "Embed metadata vektor (Adobe + Dreamstime)"
+    # Bersihkan pasangan basi bila target diganti di tengah jalan
+    # (mis. run EPS lalu SVG): paket EPS = .eps+.jpg, paket SVG = .svg+.jpg.
+    $staleFilter = if ($vecKind -eq "svg") { "*.eps" } else { "*.svg" }
+    foreach ($d in @($forAdobe, $forDream)) {
+      Get-ChildItem -LiteralPath $d -File -Filter $staleFilter -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    $vemb = @{ CsvPath = $adobeCsv; JpgDir = $prevDir; VecDir = $vecSrc; OutDir = $forAdobe; VecKind = $vecKind }
+    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
+    if ($code -ne 0) { Write-Host "  [!] Embed Adobe sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    $vemb = @{ CsvPath = $dreamCsv; JpgDir = $prevDir; VecDir = $vecSrc; OutDir = $forDream; VecKind = $vecKind }
+    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
+    if ($code -ne 0) { Write-Host "  [!] Embed Dreamstime sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    $nA = @(Get-ChildItem -LiteralPath $forAdobe -File -Filter $vecFilter).Count
+    $nD = @(Get-ChildItem -LiteralPath $forDream -File -Filter $vecFilter).Count
+    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1} (pasangan JPG+{2})." -f $nA, $nD, $vecKind.ToUpper()) -ForegroundColor Green
+    Add-Stage 7 "Embed vektor" "OK" "Adobe=$nA, Dreamstime=$nD"
+    }
 
   } catch {
     Write-Host ("  [FATAL] {0}" -f $_.Exception.Message) -ForegroundColor Red
@@ -409,15 +515,11 @@ function Main {
   # ---------- Target (menu panah) ----------
   if ([string]::IsNullOrWhiteSpace($Target)) {
     if ($interactive) {
-      $Target = Select-Option "Target output" @("JPG", "EPS") 0
+      $Target = Select-Option "Target output" @("JPG", "SVG", "EPS") 0
     } else { $Target = "JPG" }
   }
   $Target = $Target.ToUpper()
-  if ($Target -eq "EPS") {
-    Write-Host "  Jalur EPS belum tersedia (stub). Hanya JPG yang didukung saat ini." -ForegroundColor Yellow
-    exit 0
-  }
-  if ($Target -ne "JPG") { Write-Host "  Target tidak dikenal: $Target (pilih JPG/EPS)." -ForegroundColor Red; exit 1 }
+  if ($Target -notin @("JPG", "SVG", "EPS")) { Write-Host "  Target tidak dikenal: $Target (pilih JPG/SVG/EPS)." -ForegroundColor Red; exit 1 }
 
   # ---------- Daftar direktori (boleh >1) ----------
   $dirList = @($SourceDir | ForEach-Object { "$_".Trim().Trim('"').Trim("'") } | Where-Object { $_ })
@@ -430,7 +532,7 @@ function Main {
   $batch = $dirList.Count -gt 1
   $ask = $interactive -and -not $batch
 
-  if ($ask -and $script:boundKeys -notcontains "Scale") {
+  if ($ask -and $Target -eq "JPG" -and $script:boundKeys -notcontains "Scale") {
     $s = (Read-Host "Skala upscale [2-5, Enter=5]").Trim()
     if ($s -match "^[2-5]$") { $Scale = [int]$s }
   }
