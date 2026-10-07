@@ -184,5 +184,6 @@ Write-Host "  +==========================================+" -ForegroundColor Yel
 if ($failedFiles.Count -gt 0) {
   Write-Host '  File gagal:' -ForegroundColor Red
   $failedFiles | ForEach-Object { Write-Host "    - $_" -ForegroundColor Red }
-  exit 1
+  if (($ok + $skipped) -eq 0) { exit 1 }
 }
+exit 0

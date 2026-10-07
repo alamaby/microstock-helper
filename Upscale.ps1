@@ -265,3 +265,5 @@ Write-Host ("   Output        : {0}" -f $OutputDir)
 Write-Host ("   Log           : {0}" -f $LogFile)
 Write-Host "  +==========================================+" -ForegroundColor Yellow
 "Upscale-${Scale}x selesai: ok=$ok skip=$skipped fail=$failed waktu=$($totalStopwatch.Elapsed)" | Out-File $LogFile -Append
+if ((($ok + $skipped) -eq 0) -and ($total -gt 0)) { exit 1 }
+exit 0

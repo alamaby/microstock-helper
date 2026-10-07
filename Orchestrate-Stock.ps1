@@ -80,6 +80,45 @@ function Add-Stage($n, $title, $status, $detail) {
   $script:stages += [pscustomobject]@{ No = $n; Tahap = $title; Status = $status; Detail = $detail }
 }
 
+function Write-FailedList([string]$ListPath, [string[]]$Items) {
+  # Tulis daftar path gagal satu per baris (UTF8 tanpa BOM); buat folder induk.
+  # Diam bila $Items kosong (tulis file kosong). Tidak throw.
+  try {
+    $parent = Split-Path $ListPath -Parent
+    if ($parent -and (-not (Test-Path -LiteralPath $parent -PathType Container))) {
+      New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    @($Items) | Out-File -FilePath $ListPath -Encoding UTF8 -NoClobber
+    if (-not (Test-Path -LiteralPath $ListPath)) {
+      [IO.File]::WriteAllLines($ListPath, @())
+    }
+  } catch {
+    Write-Host ("  [!] Gagal menulis daftar gagal ke {0}: {1}" -f $ListPath, $_.Exception.Message) -ForegroundColor Yellow
+  }
+}
+
+function Get-MissingBasenames([string]$InDir, [string]$OutDir, [string]$OutFilter = "*", [string]$InFilter = "*") {
+  # Bandingkan basename (tanpa ekstensi) file input vs output; return array
+  # nama input yang tidak punya pasangan output.
+  # Pencocokan lintas-ekstensi via basename saja.
+  try {
+    if (-not (Test-Path -LiteralPath $InDir -PathType Container)) { return @() }
+    if (-not (Test-Path -LiteralPath $OutDir -PathType Container)) { return @() }
+    $outNames = @{}
+    foreach ($o in (Get-ChildItem -LiteralPath $OutDir -File -Filter $OutFilter -ErrorAction SilentlyContinue)) {
+      $outNames[$o.BaseName.ToLower()] = $true
+    }
+    $miss = @()
+    foreach ($i in (Get-ChildItem -LiteralPath $InDir -File -Filter $InFilter -ErrorAction SilentlyContinue)) {
+      if (-not $outNames.ContainsKey($i.BaseName.ToLower())) { $miss += $i.FullName }
+    }
+    return $miss
+  } catch {
+    Write-Host ("  [!] Gagal menghitung missing basenames ({0} -> {1}): {2}" -f $InDir, $OutDir, $_.Exception.Message) -ForegroundColor Yellow
+    return @()
+  }
+}
+
 function Read-Folder($Prompt) {
   while ($true) {
     $v = (Read-Host $Prompt).Trim().Trim('"').Trim("'")
@@ -133,16 +172,39 @@ function Ask-Default($Prompt, $Default) {
 function Invoke-Child($File, [hashtable]$Arguments) {
   # Out-Host: tampilkan progres child apa adanya TANPA mencemari return value
   # (Write-Output child tertangkap assignment bila tidak di-host-kan).
-  & $File @Arguments | Out-Host
-  return $LASTEXITCODE
+  # Try-catch: tangani exception dari child (ErrorAction=Stop) agar orchestrator
+  # tetap bisa memproses partial failure dengan konsisten.
+  try {
+    & $File @Arguments | Out-Host
+    return $LASTEXITCODE
+  } catch {
+    Write-Host ("  [!] Child script {0} throw: {1}" -f (Split-Path $File -Leaf), $_.Exception.Message) -ForegroundColor Red
+    return -1
+  }
 }
 
 # ---------- Transform: generator CSV -> 2 CSV embed ----------
-function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator) {
+function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator, [string[]]$OnlyBasenames = @()) {
   # Resume: baris "skipped" menyimpan metadata penuh (prior_items) dan
   # tetap layak embed - hanya baris gagal/nyata yang dikecualikan.
-  $rows = Import-Csv $GenCsv -Encoding UTF8 | Where-Object { $_.status -in @("success", "skipped") }
+  # $OnlyBasenames (opsional): bila non-kosong, lewati baris yang basenamenya
+  # tidak ada di daftar (case-insensitive, tanpa ekstensi).
+  $allRows = Import-Csv $GenCsv -Encoding UTF8 | Where-Object { $_.status -in @("success", "skipped") }
   $failed = @(Import-Csv $GenCsv -Encoding UTF8 | Where-Object { $_.status -notin @("success", "skipped") }).Count
+  $filteredOut = 0
+  if ($OnlyBasenames.Count -gt 0) {
+    $set = @{}
+    foreach ($b in $OnlyBasenames) { $set[$b.ToLower()] = $true }
+    $skipSet = @{}
+    $rows = @()
+    foreach ($r in $allRows) {
+      $bn = ([IO.Path]::GetFileNameWithoutExtension($r.filename)).ToLower()
+      if ($set.ContainsKey($bn)) { $rows += $r } else { $skipSet[$bn] = $true }
+    }
+    $filteredOut = $skipSet.Count
+  } else {
+    $rows = $allRows
+  }
   $adobe = @(); $dream = @()
   foreach ($r in $rows) {
     $phrases = @($r.keywords -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
@@ -176,7 +238,7 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
   $cols = @("SourceFile", "Title", "Description", "Keywords", "Copyright", "Creator")
   $adobe | Select-Object $cols | Export-Csv $AdobeCsv -Encoding UTF8 -NoTypeInformation
   $dream | Select-Object $cols | Export-Csv $DreamCsv -Encoding UTF8 -NoTypeInformation
-  return [pscustomobject]@{ OK = $rows.Count; Failed = $failed }
+  return [pscustomobject]@{ OK = $rows.Count; Failed = $failed; FilteredOut = $filteredOut }
 }
 
 function Get-ImageExtByMagic([string]$path) {
@@ -327,10 +389,11 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Write-Stage 2 "Convert ke JPG kecil"
     $conv = @{ SourceDir = $SourceDir; OutDir = $small }
     if ($Force) { $conv.Force = $true }
+    $partial2 = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-WebpToJpg.ps1") $conv
-    if ($code -ne 0) { throw "Convert WEBP gagal (exit $code)." }
+    if ($code -ne 0) { $partial2 += "WEBP"; Write-Host "  [!] Convert WEBP sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
     $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-PngToJpg.ps1") $conv
-    if ($code -ne 0) { throw "Convert PNG gagal (exit $code)." }
+    if ($code -ne 0) { $partial2 += "PNG"; Write-Host "  [!] Convert PNG sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
     $copied = 0
     foreach ($f in ($imgs | Where-Object { $_.Extension -match "^\.jpe?g$" })) {
       $dst = Join-Path $small $f.Name
@@ -343,16 +406,27 @@ function Process-Dir($DirInput, $Idx, $Total) {
     }
     $nSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg").Count
     Write-Host ("  JPG kecil: {0} file (convert+copy)." -f $nSmall) -ForegroundColor Green
-    Add-Stage 2 "Convert kecil" "OK" "$nSmall file"
     if ($nSmall -eq 0) { throw "Tidak ada JPG kecil yang dihasilkan." }
+    if ($nSmall -gt 0 -and $partial2.Count -gt 0) {
+      $miss2 = Get-MissingBasenames $SourceDir $small "*.jpg" "*.*"
+      if ($miss2.Count -gt 0) {
+        Write-FailedList (Join-Path $stock "failed_02_convert-kecil.txt") $miss2
+        Add-Stage 2 "Convert kecil" "PARTIAL" "$nSmall file, gagal: $($partial2 -join '+')"
+      } else {
+        Add-Stage 2 "Convert kecil" "OK" "$nSmall file"
+      }
+    } else {
+      Add-Stage 2 "Convert kecil" "OK" "$nSmall file"
+    }
 
     if ($Target -eq "JPG") {
     # ---------- TAHAP 3: upscale ----------
     Write-Stage 3 ("Upscale {0}x" -f $Scale)
     $uargs = @{ InputDir = $small; OutputDir = $up; Scale = $Scale }
     if ($Force) { $uargs.Force = $true }
+    $partial3 = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Upscale.ps1") $uargs
-    if ($code -ne 0) { throw "Upscale gagal (exit $code)." }
+    if ($code -ne 0) { $partial3 += "Upscale"; Write-Host "  [!] Upscale sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
     # Output Upscayl bernama *.jpg tapi isinya PNG -> betulkan ekstensi ke .png
     $fixed = 0
     foreach ($f in (Get-ChildItem -LiteralPath $up -File)) {
@@ -363,19 +437,40 @@ function Process-Dir($DirInput, $Idx, $Total) {
     }
     $nUp = @(Get-ChildItem -LiteralPath $up -File).Count
     Write-Host ("  Upscaled: {0} file (ekstensi dibetulkan: {1})." -f $nUp, $fixed) -ForegroundColor Green
-    Add-Stage 3 "Upscale" "OK" "$nUp file"
     if ($nUp -eq 0) { throw "Upscale tidak menghasilkan file." }
+    if ($nUp -gt 0 -and $partial3.Count -gt 0) {
+      $miss3 = Get-MissingBasenames $small $up "*.*" "*.jpg"
+      if ($miss3.Count -gt 0) {
+        Write-FailedList (Join-Path $stock "failed_03_upscale.txt") $miss3
+        Add-Stage 3 "Upscale" "PARTIAL" "$nUp file, gagal: $($partial3 -join '+')"
+      } else {
+        Add-Stage 3 "Upscale" "OK" "$nUp file"
+      }
+    } else {
+      Add-Stage 3 "Upscale" "OK" "$nUp file"
+    }
 
     # ---------- TAHAP 4: JPG final ----------
     Write-Stage 4 "Convert JPG final"
     $fin = @{ SourceDir = $up; OutDir = $final }
     if ($Force) { $fin.Force = $true }
+    $partial4 = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-PngToJpg.ps1") $fin
-    if ($code -ne 0) { throw "Convert final gagal (exit $code)." }
+    if ($code -ne 0) { $partial4 += "Convert"; Write-Host "  [!] Convert JPG final sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
     $nFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg").Count
     Write-Host ("  JPG final: {0} file." -f $nFinal) -ForegroundColor Green
-    Add-Stage 4 "JPG final" "OK" "$nFinal file"
     if ($nFinal -eq 0) { throw "Tidak ada JPG final." }
+    if ($nFinal -gt 0 -and $partial4.Count -gt 0) {
+      $miss4 = Get-MissingBasenames $up $final "*.jpg" "*.*"
+      if ($miss4.Count -gt 0) {
+        Write-FailedList (Join-Path $stock "failed_04_final-jpg.txt") $miss4
+        Add-Stage 4 "JPG final" "PARTIAL" "$nFinal file (+$($partial4.Count) gagal, lihat failed_04_final-jpg.txt)"
+      } else {
+        Add-Stage 4 "JPG final" "OK" "$nFinal file"
+      }
+    } else {
+      Add-Stage 4 "JPG final" "OK" "$nFinal file"
+    }
 
     # ---------- TAHAP 5: metadata (dari JPG kecil) ----------
     Write-Stage 5 "Generate metadata (dari JPG kecil)"
@@ -389,8 +484,9 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $batch = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
     $adobeCsv = Join-Path $metaDir ($batch + "_metadata_adobe.csv")
     $dreamCsv = Join-Path $metaDir ($batch + "_metadata_dreamstime.csv")
-    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator
-    Write-Host ("  Metadata: {0} OK, {1} gagal -> {2}" -f $m.OK, $m.Failed, $metaDir) -ForegroundColor Green
+    $haveFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg" -ErrorAction SilentlyContinue | % { $_.BaseName })
+    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator $haveFinal
+    Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati) -> {3}" -f $m.OK, $m.Failed, $m.FilteredOut, $metaDir) -ForegroundColor Green
     Add-Stage 5 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
     if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
 
@@ -417,8 +513,9 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $batch = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
     $adobeCsv = Join-Path $metaDir ($batch + "_metadata_adobe.csv")
     $dreamCsv = Join-Path $metaDir ($batch + "_metadata_dreamstime.csv")
-    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator
-    Write-Host ("  Metadata: {0} OK, {1} gagal -> {2}" -f $m.OK, $m.Failed, $metaDir) -ForegroundColor Green
+    $haveSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg" -ErrorAction SilentlyContinue | % { $_.BaseName })
+    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator $haveSmall
+    Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati) -> {3}" -f $m.OK, $m.Failed, $m.FilteredOut, $metaDir) -ForegroundColor Green
     Add-Stage 3 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
     if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
 
@@ -426,23 +523,45 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Write-Stage 4 "Trace JPG kecil -> SVG (vtracer)"
     $targs = @{ InputDir = $small; OutDir = $svgDir }
     if ($Force) { $targs.Force = $true }
+    $partial4v = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Trace-Svg.ps1") $targs
-    if ($code -ne 0) { throw "Trace SVG gagal (exit $code)." }
+    if ($code -ne 0) { $partial4v += "Trace"; Write-Host "  [!] Trace SVG sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
     $nSvg = @(Get-ChildItem -LiteralPath $svgDir -File -Filter "*.svg").Count
     Write-Host ("  SVG: {0} file." -f $nSvg) -ForegroundColor Green
-    Add-Stage 4 "Trace SVG" "OK" "$nSvg file"
     if ($nSvg -eq 0) { throw "Trace tidak menghasilkan SVG." }
+    if ($nSvg -gt 0 -and $partial4v.Count -gt 0) {
+      $miss4v = Get-MissingBasenames $small $svgDir "*.svg" "*.jpg"
+      if ($miss4v.Count -gt 0) {
+        Write-FailedList (Join-Path $stock "failed_04_trace-svg.txt") $miss4v
+        Add-Stage 4 "Trace SVG" "PARTIAL" "$nSvg file, gagal: $($partial4v -join '+')"
+      } else {
+        Add-Stage 4 "Trace SVG" "OK" "$nSvg file"
+      }
+    } else {
+      Add-Stage 4 "Trace SVG" "OK" "$nSvg file"
+    }
 
     # ---------- TAHAP 5V: preview JPG besar ----------
     Write-Stage 5 ("Render preview JPG (lebar {0}px)" -f $PreviewWidth)
     $pargs = @{ SvgDir = $svgDir; OutDir = $prevDir; Width = $PreviewWidth }
     if ($Force) { $pargs.Force = $true }
+    $partial5v = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Export-VectorPreview.ps1") $pargs
-    if ($code -ne 0) { throw "Render preview gagal (exit $code)." }
+    if ($code -ne 0) { $partial5v += "Preview"; Write-Host "  [!] Render preview JPG sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
     $nPrev = @(Get-ChildItem -LiteralPath $prevDir -File -Filter "*.jpg").Count
     Write-Host ("  Preview: {0} file." -f $nPrev) -ForegroundColor Green
-    Add-Stage 5 "Preview JPG" "OK" "$nPrev file"
     if ($nPrev -eq 0) { throw "Tidak ada JPG preview." }
+    if ($nPrev -gt 0 -and $partial5v.Count -gt 0) {
+      $miss5v = Get-MissingBasenames $svgDir $prevDir "*.jpg" "*.svg"
+      if ($miss5v.Count -gt 0) {
+        Write-FailedList (Join-Path $stock "failed_05_preview-jpg.txt") $miss5v
+        Add-Stage 5 "Preview JPG" "PARTIAL" "$nPrev file, gagal: $($partial5v -join '+')"
+      } else {
+        Add-Stage 5 "Preview JPG" "OK" "$nPrev file"
+      }
+    } else {
+      Add-Stage 5 "Preview JPG" "OK" "$nPrev file"
+    }
 
     # ---------- TAHAP 6V: EPS (jalur EPS saja; paket = .eps + .jpg) ----------
     $vecSrc = $svgDir; $vecKind = "svg"; $vecFilter = "*.svg"
@@ -450,12 +569,23 @@ function Process-Dir($DirInput, $Idx, $Total) {
       Write-Stage 6 "Convert SVG -> EPS (Inkscape)"
       $eargs = @{ SvgDir = $svgDir; OutDir = $epsDir }
       if ($Force) { $eargs.Force = $true }
+      $partial6v = @()
       $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-SvgToEps.ps1") $eargs
-      if ($code -ne 0) { throw "Convert EPS gagal (exit $code)." }
+      if ($code -ne 0) { $partial6v += "EPS"; Write-Host "  [!] Convert EPS sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
       $nEps = @(Get-ChildItem -LiteralPath $epsDir -File -Filter "*.eps").Count
       Write-Host ("  EPS: {0} file." -f $nEps) -ForegroundColor Green
-      Add-Stage 6 "SVG->EPS" "OK" "$nEps file"
       if ($nEps -eq 0) { throw "Tidak ada EPS yang dihasilkan." }
+      if ($nEps -gt 0 -and $partial6v.Count -gt 0) {
+        $miss6v = Get-MissingBasenames $svgDir $epsDir "*.eps" "*.svg"
+        if ($miss6v.Count -gt 0) {
+          Write-FailedList (Join-Path $stock "failed_06_svg-eps.txt") $miss6v
+          Add-Stage 6 "SVG->EPS" "PARTIAL" "$nEps file, gagal: $($partial6v -join '+')"
+        } else {
+          Add-Stage 6 "SVG->EPS" "OK" "$nEps file"
+        }
+      } else {
+        Add-Stage 6 "SVG->EPS" "OK" "$nEps file"
+      }
       $vecSrc = $epsDir; $vecKind = "eps"; $vecFilter = "*.eps"
     }
 
@@ -490,8 +620,23 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Write-Host "  |  ORCHESTRATOR SUMMARY                   |" -ForegroundColor Yellow
     Write-Host "  +==========================================+" -ForegroundColor Yellow
     foreach ($s in $script:stages) {
-      $c = if ($s.Status -eq "OK" -or $s.Status -eq "SKIP") { "Green" } else { "Red" }
+      $c = if ($s.Status -eq "OK" -or $s.Status -eq "SKIP") { "Green" }
+           elseif ($s.Status -eq "PARTIAL") { "Yellow" }
+           else { "Red" }
       Write-Host ("   [{0}] {1,-14} {2,-6} {3}" -f $s.No, $s.Tahap, $s.Status, $s.Detail) -ForegroundColor $c
+    }
+    $hasPartial = ($script:stages | Where-Object { $_.Status -eq "PARTIAL" }).Count -gt 0
+    $hasFatal = ($script:stages | Where-Object { $_.Status -notin @("OK", "SKIP", "PARTIAL") }).Count -gt 0
+    if ($hasPartial -and (-not $hasFatal)) {
+      Write-Host ""
+      Write-Host "  Pemulihan: perbaiki file di failed_*.txt di $stock, lalu rerun perintah yang sama (tanpa -Force)." -ForegroundColor Yellow
+      $failedFiles = @(Get-ChildItem -LiteralPath $stock -File -Filter "failed_*.txt" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+      if ($failedFiles.Count -gt 0) {
+        Write-Host "  Daftar gagal:" -ForegroundColor Yellow
+        foreach ($ff in $failedFiles) {
+          Write-Host ("    - {0}" -f (Split-Path $ff -Leaf)) -ForegroundColor Yellow
+        }
+      }
     }
     Write-Host ("   Total waktu : {0}" -f $script:swTotal.Elapsed.ToString("hh\:mm\:ss"))
     Write-Host ("   Upload Adobe: {0}" -f $forAdobe)
@@ -500,8 +645,9 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Write-Host "  +==========================================+" -ForegroundColor Yellow
     try { Stop-Transcript | Out-Null } catch { }
   }
-  $bad = @($script:stages | Where-Object { $_.Status -notin @("OK", "SKIP") })
-  $st = if ($bad.Count -eq 0) { "OK" } else { "GAGAL" }
+  $hasFatal = ($script:stages | Where-Object { $_.Status -notin @("OK", "SKIP", "PARTIAL") }).Count -gt 0
+  $hasPartial = ($script:stages | Where-Object { $_.Status -eq "PARTIAL" }).Count -gt 0
+  $st = if ($hasFatal) { "GAGAL" } elseif ($hasPartial) { "PARTIAL" } else { "OK" }
   return [pscustomobject]@{
     Dir = $SourceDir; Status = $st
     Adobe = $forAdobe; Dream = $forDream
@@ -565,13 +711,15 @@ function Main {
     Write-Host "  |  REKAP ANTREAN                          |" -ForegroundColor Yellow
     Write-Host "  +==========================================+" -ForegroundColor Yellow
     foreach ($r in $results) {
-      $c = if ($r.Status -eq "OK") { "Green" } else { "Red" }
+      $c = if ($r.Status -eq "OK") { "Green" }
+           elseif ($r.Status -eq "PARTIAL") { "Yellow" }
+           else { "Red" }
       Write-Host ("   [{0,-5}] {1}" -f $r.Status, $r.Dir) -ForegroundColor $c
     }
     Write-Host ("   Total waktu antrean: {0}" -f $grand.Elapsed.ToString("hh\:mm\:ss"))
     Write-Host "  +==========================================+" -ForegroundColor Yellow
   }
-  $failCount = @($results | Where-Object { $_.Status -ne "OK" }).Count
+  $failCount = @($results | Where-Object { $_.Status -eq "GAGAL" }).Count
   if ($failCount -gt 0) { exit 1 } else { exit 0 }
 }
 

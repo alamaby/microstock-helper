@@ -206,5 +206,6 @@ Write-Host $bar -ForegroundColor Cyan
 if ($failedFiles.Count -gt 0) {
   Write-Host '  File gagal:' -ForegroundColor Red
   $failedFiles | ForEach-Object { Write-Host "    - $_" -ForegroundColor Red }
-  exit 1
+  if (($converted + $skipped) -eq 0) { exit 1 }
 }
+exit 0
