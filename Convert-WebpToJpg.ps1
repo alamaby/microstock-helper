@@ -174,20 +174,23 @@ foreach ($f in $files) {
   # (ekstensi .tmp.jpg agar ffmpeg tetap mengenali format output).
   $tmp = "$dst.tmp.jpg"
 
-  $commonArgs = "-y -loglevel warning -i `"$($f.FullName)`" -frames:v 1 -map_metadata 0 -q:v $Quality"
-  if (Test-HasAlpha $f.FullName) {
-    $commonArgs += " -vf `"$alphaFilter`""
-  }
-
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = 'ffmpeg'
-  $psi.Arguments = "$commonArgs `"$tmp`""
-  $psi.UseShellExecute = $false
-  $psi.CreateNoWindow = $true
-  $psi.RedirectStandardError = $true
-  $psi.RedirectStandardOutput = $true
-
+  # Seluruh pemrosesan per-file (termasuk deteksi alpha via ffprobe)
+  # dibungkus try agar 1 file korup tidak pernah membunuh batch.
+  $ok = $false
   try {
+    $commonArgs = "-y -loglevel warning -i `"$($f.FullName)`" -frames:v 1 -map_metadata 0 -q:v $Quality"
+    if (Test-HasAlpha $f.FullName) {
+      $commonArgs += " -vf `"$alphaFilter`""
+    }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'ffmpeg'
+    $psi.Arguments = "$commonArgs `"$tmp`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardError = $true
+    $psi.RedirectStandardOutput = $true
+
     $p = [System.Diagnostics.Process]::Start($psi)
     $fi = 0
     while (-not $p.HasExited) {

@@ -179,6 +179,10 @@ function Invoke-Child($File, [hashtable]$Arguments) {
     return $LASTEXITCODE
   } catch {
     Write-Host ("  [!] Child script {0} throw: {1}" -f (Split-Path $File -Leaf), $_.Exception.Message) -ForegroundColor Red
+    if ($_.ScriptStackTrace) {
+      $stackLines = @($_.ScriptStackTrace -split "`r?`n" | Where-Object { $_ -match '\S' } | Select-Object -First 5)
+      Write-Host ("  [!] Stack: {0}" -f ($stackLines -join " <- ")) -ForegroundColor DarkGray
+    }
     return -1
   }
 }
@@ -390,10 +394,10 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $conv = @{ SourceDir = $SourceDir; OutDir = $small }
     if ($Force) { $conv.Force = $true }
     $partial2 = @()
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-WebpToJpg.ps1") $conv
-    if ($code -ne 0) { $partial2 += "WEBP"; Write-Host "  [!] Convert WEBP sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-PngToJpg.ps1") $conv
-    if ($code -ne 0) { $partial2 += "PNG"; Write-Host "  [!] Convert PNG sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
+    $codeWebp = Invoke-Child (Join-Path $PSScriptRoot "Convert-WebpToJpg.ps1") $conv
+    if ($codeWebp -ne 0) { $partial2 += "WEBP" }
+    $codePng = Invoke-Child (Join-Path $PSScriptRoot "Convert-PngToJpg.ps1") $conv
+    if ($codePng -ne 0) { $partial2 += "PNG" }
     $copied = 0
     foreach ($f in ($imgs | Where-Object { $_.Extension -match "^\.jpe?g$" })) {
       $dst = Join-Path $small $f.Name
@@ -410,6 +414,7 @@ function Process-Dir($DirInput, $Idx, $Total) {
     if ($nSmall -gt 0 -and $partial2.Count -gt 0) {
       $miss2 = Get-MissingBasenames $SourceDir $small "*.jpg" "*.*"
       if ($miss2.Count -gt 0) {
+        Write-Host ("  [!] Convert kecil sebagian gagal (WEBP exit {0}, PNG exit {1}), lanjut dengan file sukses." -f $codeWebp, $codePng) -ForegroundColor Yellow
         Write-FailedList (Join-Path $stock "failed_02_convert-kecil.txt") $miss2
         Add-Stage 2 "Convert kecil" "PARTIAL" "$nSmall file, gagal: $($partial2 -join '+')"
       } else {
@@ -426,7 +431,7 @@ function Process-Dir($DirInput, $Idx, $Total) {
     if ($Force) { $uargs.Force = $true }
     $partial3 = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Upscale.ps1") $uargs
-    if ($code -ne 0) { $partial3 += "Upscale"; Write-Host "  [!] Upscale sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
+    if ($code -ne 0) { $partial3 += "Upscale" }
     # Output Upscayl bernama *.jpg tapi isinya PNG -> betulkan ekstensi ke .png
     $fixed = 0
     foreach ($f in (Get-ChildItem -LiteralPath $up -File)) {
@@ -441,6 +446,7 @@ function Process-Dir($DirInput, $Idx, $Total) {
     if ($nUp -gt 0 -and $partial3.Count -gt 0) {
       $miss3 = Get-MissingBasenames $small $up "*.*" "*.jpg"
       if ($miss3.Count -gt 0) {
+        Write-Host ("  [!] Upscale sebagian gagal (exit {0}), lanjut dengan file sukses." -f $code) -ForegroundColor Yellow
         Write-FailedList (Join-Path $stock "failed_03_upscale.txt") $miss3
         Add-Stage 3 "Upscale" "PARTIAL" "$nUp file, gagal: $($partial3 -join '+')"
       } else {
@@ -456,13 +462,14 @@ function Process-Dir($DirInput, $Idx, $Total) {
     if ($Force) { $fin.Force = $true }
     $partial4 = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-PngToJpg.ps1") $fin
-    if ($code -ne 0) { $partial4 += "Convert"; Write-Host "  [!] Convert JPG final sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
+    if ($code -ne 0) { $partial4 += "Convert" }
     $nFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg").Count
     Write-Host ("  JPG final: {0} file." -f $nFinal) -ForegroundColor Green
     if ($nFinal -eq 0) { throw "Tidak ada JPG final." }
     if ($nFinal -gt 0 -and $partial4.Count -gt 0) {
       $miss4 = Get-MissingBasenames $up $final "*.jpg" "*.*"
       if ($miss4.Count -gt 0) {
+        Write-Host ("  [!] Convert JPG final sebagian gagal (exit {0}), lanjut dengan file sukses." -f $code) -ForegroundColor Yellow
         Write-FailedList (Join-Path $stock "failed_04_final-jpg.txt") $miss4
         Add-Stage 4 "JPG final" "PARTIAL" "$nFinal file (+$($partial4.Count) gagal, lihat failed_04_final-jpg.txt)"
       } else {
@@ -525,13 +532,14 @@ function Process-Dir($DirInput, $Idx, $Total) {
     if ($Force) { $targs.Force = $true }
     $partial4v = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Trace-Svg.ps1") $targs
-    if ($code -ne 0) { $partial4v += "Trace"; Write-Host "  [!] Trace SVG sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
+    if ($code -ne 0) { $partial4v += "Trace" }
     $nSvg = @(Get-ChildItem -LiteralPath $svgDir -File -Filter "*.svg").Count
     Write-Host ("  SVG: {0} file." -f $nSvg) -ForegroundColor Green
     if ($nSvg -eq 0) { throw "Trace tidak menghasilkan SVG." }
     if ($nSvg -gt 0 -and $partial4v.Count -gt 0) {
       $miss4v = Get-MissingBasenames $small $svgDir "*.svg" "*.jpg"
       if ($miss4v.Count -gt 0) {
+        Write-Host ("  [!] Trace SVG sebagian gagal (exit {0}), lanjut dengan file sukses." -f $code) -ForegroundColor Yellow
         Write-FailedList (Join-Path $stock "failed_04_trace-svg.txt") $miss4v
         Add-Stage 4 "Trace SVG" "PARTIAL" "$nSvg file, gagal: $($partial4v -join '+')"
       } else {
@@ -547,13 +555,14 @@ function Process-Dir($DirInput, $Idx, $Total) {
     if ($Force) { $pargs.Force = $true }
     $partial5v = @()
     $code = Invoke-Child (Join-Path $PSScriptRoot "Export-VectorPreview.ps1") $pargs
-    if ($code -ne 0) { $partial5v += "Preview"; Write-Host "  [!] Render preview JPG sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
+    if ($code -ne 0) { $partial5v += "Preview" }
     $nPrev = @(Get-ChildItem -LiteralPath $prevDir -File -Filter "*.jpg").Count
     Write-Host ("  Preview: {0} file." -f $nPrev) -ForegroundColor Green
     if ($nPrev -eq 0) { throw "Tidak ada JPG preview." }
     if ($nPrev -gt 0 -and $partial5v.Count -gt 0) {
       $miss5v = Get-MissingBasenames $svgDir $prevDir "*.jpg" "*.svg"
       if ($miss5v.Count -gt 0) {
+        Write-Host ("  [!] Render preview JPG sebagian gagal (exit {0}), lanjut dengan file sukses." -f $code) -ForegroundColor Yellow
         Write-FailedList (Join-Path $stock "failed_05_preview-jpg.txt") $miss5v
         Add-Stage 5 "Preview JPG" "PARTIAL" "$nPrev file, gagal: $($partial5v -join '+')"
       } else {
@@ -571,13 +580,14 @@ function Process-Dir($DirInput, $Idx, $Total) {
       if ($Force) { $eargs.Force = $true }
       $partial6v = @()
       $code = Invoke-Child (Join-Path $PSScriptRoot "Convert-SvgToEps.ps1") $eargs
-      if ($code -ne 0) { $partial6v += "EPS"; Write-Host "  [!] Convert EPS sebagian gagal (exit $code), lanjut dengan file sukses." -ForegroundColor Yellow }
+      if ($code -ne 0) { $partial6v += "EPS" }
       $nEps = @(Get-ChildItem -LiteralPath $epsDir -File -Filter "*.eps").Count
       Write-Host ("  EPS: {0} file." -f $nEps) -ForegroundColor Green
       if ($nEps -eq 0) { throw "Tidak ada EPS yang dihasilkan." }
       if ($nEps -gt 0 -and $partial6v.Count -gt 0) {
         $miss6v = Get-MissingBasenames $svgDir $epsDir "*.eps" "*.svg"
         if ($miss6v.Count -gt 0) {
+          Write-Host ("  [!] Convert EPS sebagian gagal (exit {0}), lanjut dengan file sukses." -f $code) -ForegroundColor Yellow
           Write-FailedList (Join-Path $stock "failed_06_svg-eps.txt") $miss6v
           Add-Stage 6 "SVG->EPS" "PARTIAL" "$nEps file, gagal: $($partial6v -join '+')"
         } else {
