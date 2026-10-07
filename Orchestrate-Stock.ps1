@@ -15,21 +15,26 @@
                   Hasil jadi 2 CSV Adobe+Dreamstime.
     6. Embed      : metadata -> for_adobe/ + for_dreamstime/ (file upload).
 
-  Tahapan (jalur SVG / EPS - vektor dari raster):
+  Tahapan (jalur SVG / EPS - vektor dari raster, resume-aware):
     0. Preflight  : cek ffmpeg, ExifTool, vtracer, Inkscape, script
                   vektor, generator (tanpa Upscayl).
     1. Rename     : sama seperti JPG.
     2. Convert    : sama seperti JPG (JPG kecil = bahan trace + inference).
-    3. Metadata   : via inference API dari JPG KECIL -> 2 CSV.
+                  SKIP bila _stock/02_jpg_small sudah lengkap (mis. habis jalur JPG).
+    3. Metadata   : reuse 2 CSV embed bila sudah lengkap dari run JPG
+                  (tanpa API); rebuild dari metadata.csv mentah bila
+                  Copyright/Creator berubah; generate API hanya bila kurang.
     4. Trace      : JPG kecil -> SVG ke _stock/05_svg (via vtracer,
-                  color-cluster/cutout/spline).
+                  color-cluster/cutout/spline). Yang sudah valid di-skip.
     5. Preview    : SVG -> JPG besar ke _stock/06_preview_jpg (render
                   Inkscape selebar PreviewWidth, lalu ffmpeg q:v 1).
-                  Basename SAMA dengan SVG.
+                  Basename SAMA dengan SVG. Yang sudah ada di-skip.
     6. EPS        : (jalur EPS saja) SVG -> EPS ke _stock/07_eps
                   via Inkscape CLI. Paket EPS = .eps + .jpg saja.
-    7. Embed      : metadata -> for_adobe/ + for_dreamstime/ berisi
-                  pasangan (JPG+SVG atau JPG+EPS, basename sama) +
+    7. Embed      : metadata -> for_adobe_svg/for_dreamstime_svg atau
+                  for_adobe_eps/for_dreamstime_eps (TERPISAH dari
+                  for_adobe/for_dreamstime jalur JPG agar tidak menimpa)
+                  berisi pasangan (JPG+SVG atau JPG+EPS, basename sama) +
                   salinan CSV agensi. JPG triple-sync, EPS XMP,
                   SVG injeksi XML native (best-effort).
 
@@ -68,6 +73,7 @@ $Stopwords = @("a", "an", "the", "and", "or", "but", "of", "on", "in", "at", "to
 
 $script:stages = @()
 $script:swTotal = [System.Diagnostics.Stopwatch]::StartNew()
+$script:MetadataBackend = "api"
 # Tangkap param terikat di scope skrip (di dalam fungsi $PSBoundParameters milik fungsi itu).
 $script:boundKeys = @($PSBoundParameters.Keys)
 
@@ -117,6 +123,68 @@ function Get-MissingBasenames([string]$InDir, [string]$OutDir, [string]$OutFilte
     Write-Host ("  [!] Gagal menghitung missing basenames ({0} -> {1}): {2}" -f $InDir, $OutDir, $_.Exception.Message) -ForegroundColor Yellow
     return @()
   }
+}
+
+function Get-NormBase([string]$name) {
+  # Normalisasi basename untuk perbandingan: ambil nama file (tanpa path),
+  # kupas SATU ekstensi image/vektor yang dikenal bila ada, lowercase.
+  # (GetFileNameWithoutExtension tidak cocok karena basename kita
+  #  mengandung titik, mis. "001__001.-Create-...".)
+  $f = [IO.Path]::GetFileName($name)
+  foreach ($e in @(".jpg", ".jpeg", ".png", ".webp", ".svg", ".eps")) {
+    if ($f.ToLower().EndsWith($e)) { return $f.Substring(0, $f.Length - $e.Length).ToLower() }
+  }
+  return $f.ToLower()
+}
+
+function Test-EmbedCsvComplete([string]$CsvPath, [string[]]$NeedBasenames) {
+  # True bila CSV embed ada dan setiap basename di $NeedBasenames
+  # punya baris (bandingkan via Get-NormBase atas SourceFile).
+  try {
+    if (-not (Test-Path -LiteralPath $CsvPath -PathType Leaf)) { return $false }
+    if ($NeedBasenames.Count -eq 0) { return $false }
+    $have = @{}
+    foreach ($r in (Import-Csv -LiteralPath $CsvPath -Encoding UTF8 -ErrorAction Stop)) {
+      if ($r.SourceFile) {
+        $have[(Get-NormBase $r.SourceFile)] = $true
+      }
+    }
+    foreach ($b in $NeedBasenames) {
+      if (-not $have.ContainsKey((Get-NormBase $b))) { return $false }
+    }
+    return $true
+  } catch { return $false }
+}
+
+function Test-GenCsvComplete([string]$GenCsv, [string[]]$NeedBasenames) {
+  # True bila metadata.csv mentah ada dan setiap basename kebutuhan
+  # ada di baris status success/skipped (kolom filename).
+  try {
+    if (-not (Test-Path -LiteralPath $GenCsv -PathType Leaf)) { return $false }
+    if ($NeedBasenames.Count -eq 0) { return $false }
+    $have = @{}
+    foreach ($r in (Import-Csv -LiteralPath $GenCsv -Encoding UTF8 -ErrorAction Stop |
+      Where-Object { $_.status -in @("success", "skipped") })) {
+      if ($r.filename) {
+        $have[(Get-NormBase $r.filename)] = $true
+      }
+    }
+    foreach ($b in $NeedBasenames) {
+      if (-not $have.ContainsKey((Get-NormBase $b))) { return $false }
+    }
+    return $true
+  } catch { return $false }
+}
+
+function Test-EmbedCsvIdentity([string]$CsvPath, [string]$Copyright, [string]$Creator) {
+  # True bila Copyright/Creator di CSV sama dengan yang diminta
+  # (cek baris pertama; bila CSV kosong -> false agar di-rebuild).
+  try {
+    if (-not (Test-Path -LiteralPath $CsvPath -PathType Leaf)) { return $false }
+    $first = Import-Csv -LiteralPath $CsvPath -Encoding UTF8 -ErrorAction Stop | Select-Object -First 1
+    if (-not $first) { return $false }
+    return ($first.Copyright -eq $Copyright -and $first.Creator -eq $Creator)
+  } catch { return $false }
 }
 
 function Read-Folder($Prompt) {
@@ -292,9 +360,20 @@ function Process-Dir($DirInput, $Idx, $Total) {
   $epsDir = Join-Path $stock "07_eps"
   $metaDir = Join-Path $stock "metadata"
   $rawDir = Join-Path $metaDir "raw"
-  $forAdobe = Join-Path $stock "for_adobe"
-  $forDream = Join-Path $stock "for_dreamstime"
-  foreach ($d in @($stock, $small, $up, $final, $svgDir, $prevDir, $epsDir, $metaDir, $rawDir, $forAdobe, $forDream)) {
+  # Paket upload JPG tetap di for_adobe/for_dreamstime. Paket vektor
+  # dipisah agar tidak menimpa hasil JPG: for_adobe_svg / for_adobe_eps.
+  $forAdobeJpg = Join-Path $stock "for_adobe"
+  $forDreamJpg = Join-Path $stock "for_dreamstime"
+  $forAdobe = $forAdobeJpg
+  $forDream = $forDreamJpg
+  if ($Target -eq "SVG") {
+    $forAdobe = Join-Path $stock "for_adobe_svg"
+    $forDream = Join-Path $stock "for_dreamstime_svg"
+  } elseif ($Target -eq "EPS") {
+    $forAdobe = Join-Path $stock "for_adobe_eps"
+    $forDream = Join-Path $stock "for_dreamstime_eps"
+  }
+  foreach ($d in @($stock, $small, $up, $final, $svgDir, $prevDir, $epsDir, $metaDir, $rawDir, $forAdobeJpg, $forDreamJpg, $forAdobe, $forDream)) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
   }
   Start-Transcript -Path (Join-Path $stock "orchestrator.log") -Append | Out-Null
@@ -313,6 +392,22 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Write-Host "   AI image -> siap upload Adobe + Dreamstime (Target: $Target)" -ForegroundColor Yellow
     Write-Host "  Sumber : $SourceDir" -ForegroundColor Gray
     Write-Host "  Kerja  : $stock" -ForegroundColor Gray
+    if ($Target -in @("SVG", "EPS")) {
+      $rsSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
+      $rsFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
+      $rsSvg = @(Get-ChildItem -LiteralPath $svgDir -File -Filter "*.svg" -ErrorAction SilentlyContinue).Count
+      $rsPrev = @(Get-ChildItem -LiteralPath $prevDir -File -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
+      $rsEps = @(Get-ChildItem -LiteralPath $epsDir -File -Filter "*.eps" -ErrorAction SilentlyContinue).Count
+      $batchProbe = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
+      $rsMetaA = Test-Path -LiteralPath (Join-Path $metaDir ($batchProbe + "_metadata_adobe.csv"))
+      $rsMetaD = Test-Path -LiteralPath (Join-Path $metaDir ($batchProbe + "_metadata_dreamstime.csv"))
+      $rsJpgDone = ($rsSmall -gt 0 -and $rsFinal -gt 0 -and $rsMetaA -and $rsMetaD)
+      $rsJpgTag = if ($rsJpgDone) { "DONE (jalur JPG selesai, lanjutkan sisa task saja)" } else { "BELUM (jalur JPG belum lengkap, tahap 2-3 ikut jalan)" }
+      Write-Host ("  Resume : JPG kecil={0}, JPG final={1}, metadata Adobe={2}, Dreamstime={3} -> {4}" -f $rsSmall, $rsFinal, $rsMetaA, $rsMetaD, $rsJpgTag) -ForegroundColor Yellow
+      Write-Host ("  Resume : SVG={0}, preview={1}, EPS={2} (yang sudah valid di-skip, hanya yang belum diproses)." -f $rsSvg, $rsPrev, $rsEps) -ForegroundColor Yellow
+      Write-Host ("  Upload : Adobe -> {0}" -f $forAdobe) -ForegroundColor Gray
+      Write-Host ("  Upload : Dreamstime -> {0} (paket vektor terpisah, JPG lama tidak ditimpa)." -f $forDream) -ForegroundColor Gray
+    }
 
     $imgExt = @(".png", ".jpg", ".jpeg", ".webp")
 
@@ -350,8 +445,8 @@ function Process-Dir($DirInput, $Idx, $Total) {
       Add-Stage 0 "Preflight" "GAGAL" ($fatal -join "; ")
       throw "Preflight gagal."
     }
-    Write-Host "  [OK] semua prasyarat terpenuhi (backend metadata: $MetadataBackend)." -ForegroundColor Green
-    Add-Stage 0 "Preflight" "OK" "backend=$MetadataBackend"
+    Write-Host "  [OK] semua prasyarat terpenuhi (backend metadata: $($script:MetadataBackend))." -ForegroundColor Green
+    Add-Stage 0 "Preflight" "OK" "backend=$($script:MetadataBackend)"
 
     # ---------- TAHAP 1: rename ----------
     Write-Stage 1 "Rename 001_... (in-place)"
@@ -391,37 +486,49 @@ function Process-Dir($DirInput, $Idx, $Total) {
 
     # ---------- TAHAP 2: convert kecil ----------
     Write-Stage 2 "Convert ke JPG kecil"
-    $conv = @{ SourceDir = $SourceDir; OutDir = $small }
-    if ($Force) { $conv.Force = $true }
-    $partial2 = @()
-    $codeWebp = Invoke-Child (Join-Path $PSScriptRoot "Convert-WebpToJpg.ps1") $conv
-    if ($codeWebp -ne 0) { $partial2 += "WEBP" }
-    $codePng = Invoke-Child (Join-Path $PSScriptRoot "Convert-PngToJpg.ps1") $conv
-    if ($codePng -ne 0) { $partial2 += "PNG" }
-    $copied = 0
-    foreach ($f in ($imgs | Where-Object { $_.Extension -match "^\.jpe?g$" })) {
-      $dst = Join-Path $small $f.Name
-      if ((-not (Test-Path -LiteralPath $dst)) -or $Force) {
-        $tmpC = "$dst.tmp"
-        Copy-Item -LiteralPath $f.FullName -Destination $tmpC -Force
-        Move-Item -LiteralPath $tmpC -Destination $dst -Force
-        $copied++
+    $nSmallPre = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
+    $missPre2 = @()
+    if (-not $Force) { $missPre2 = Get-MissingBasenames $SourceDir $small "*.jpg" "*.*" }
+    if ((-not $Force) -and $nSmallPre -gt 0 -and $missPre2.Count -eq 0) {
+      Write-Host ("  JPG kecil sudah lengkap: {0} file, skip convert." -f $nSmallPre) -ForegroundColor Green
+      Add-Stage 2 "Convert kecil" "SKIP" "$nSmallPre file sudah ada"
+      $nSmall = $nSmallPre
+    } else {
+      if ((-not $Force) -and $missPre2.Count -gt 0) {
+        Write-Host ("  JPG kecil: {0} sudah ada, {1} belum -> hanya yang belum diproses." -f $nSmallPre, $missPre2.Count) -ForegroundColor Yellow
       }
-    }
-    $nSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg").Count
-    Write-Host ("  JPG kecil: {0} file (convert+copy)." -f $nSmall) -ForegroundColor Green
-    if ($nSmall -eq 0) { throw "Tidak ada JPG kecil yang dihasilkan." }
-    if ($nSmall -gt 0 -and $partial2.Count -gt 0) {
-      $miss2 = Get-MissingBasenames $SourceDir $small "*.jpg" "*.*"
-      if ($miss2.Count -gt 0) {
-        Write-Host ("  [!] Convert kecil sebagian gagal (WEBP exit {0}, PNG exit {1}), lanjut dengan file sukses." -f $codeWebp, $codePng) -ForegroundColor Yellow
-        Write-FailedList (Join-Path $stock "failed_02_convert-kecil.txt") $miss2
-        Add-Stage 2 "Convert kecil" "PARTIAL" "$nSmall file, gagal: $($partial2 -join '+')"
+      $conv = @{ SourceDir = $SourceDir; OutDir = $small }
+      if ($Force) { $conv.Force = $true }
+      $partial2 = @()
+      $codeWebp = Invoke-Child (Join-Path $PSScriptRoot "Convert-WebpToJpg.ps1") $conv
+      if ($codeWebp -ne 0) { $partial2 += "WEBP" }
+      $codePng = Invoke-Child (Join-Path $PSScriptRoot "Convert-PngToJpg.ps1") $conv
+      if ($codePng -ne 0) { $partial2 += "PNG" }
+      $copied = 0
+      foreach ($f in ($imgs | Where-Object { $_.Extension -match "^\.jpe?g$" })) {
+        $dst = Join-Path $small $f.Name
+        if ((-not (Test-Path -LiteralPath $dst)) -or $Force) {
+          $tmpC = "$dst.tmp"
+          Copy-Item -LiteralPath $f.FullName -Destination $tmpC -Force
+          Move-Item -LiteralPath $tmpC -Destination $dst -Force
+          $copied++
+        }
+      }
+      $nSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg").Count
+      Write-Host ("  JPG kecil: {0} file (convert+copy)." -f $nSmall) -ForegroundColor Green
+      if ($nSmall -eq 0) { throw "Tidak ada JPG kecil yang dihasilkan." }
+      if ($nSmall -gt 0 -and $partial2.Count -gt 0) {
+        $miss2 = Get-MissingBasenames $SourceDir $small "*.jpg" "*.*"
+        if ($miss2.Count -gt 0) {
+          Write-Host ("  [!] Convert kecil sebagian gagal (WEBP exit {0}, PNG exit {1}), lanjut dengan file sukses." -f $codeWebp, $codePng) -ForegroundColor Yellow
+          Write-FailedList (Join-Path $stock "failed_02_convert-kecil.txt") $miss2
+          Add-Stage 2 "Convert kecil" "PARTIAL" "$nSmall file, gagal: $($partial2 -join '+')"
+        } else {
+          Add-Stage 2 "Convert kecil" "OK" "$nSmall file"
+        }
       } else {
         Add-Stage 2 "Convert kecil" "OK" "$nSmall file"
       }
-    } else {
-      Add-Stage 2 "Convert kecil" "OK" "$nSmall file"
     }
 
     if ($Target -eq "JPG") {
@@ -482,7 +589,7 @@ function Process-Dir($DirInput, $Idx, $Total) {
     # ---------- TAHAP 5: metadata (dari JPG kecil) ----------
     Write-Stage 5 "Generate metadata (dari JPG kecil)"
     $runBat = Join-Path $GenDir "run.bat"
-    $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $MetadataBackend"
+    $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)"
     Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
     cmd /c $genCmd
     if ($LASTEXITCODE -ne 0) { throw "Generate metadata gagal (exit $LASTEXITCODE) - lihat $rawDir\processing.log." }
@@ -508,26 +615,53 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}." -f $nA, $nD) -ForegroundColor Green
     Add-Stage 6 "Embed" "OK" "Adobe=$nA, Dreamstime=$nD"
     } else {
-    # ---------- TAHAP 3V: metadata vektor (dari JPG kecil) ----------
+    # ---------- TAHAP 3V: metadata vektor (dari JPG kecil, resume-aware) ----------
+    # Bila direktori sudah menyelesaikan jalur JPG, metadata.csv + 2 CSV embed
+    # sudah ada -> pakai ulang tanpa panggil API. 3 tier:
+    #  Tier 1 full-reuse (tanpa API, tanpa rebuild),
+    #  Tier 2 rebuild dari metadata.csv mentah (tanpa API),
+    #  Tier 3 generate API penuh (baru atau belum lengkap).
     Write-Stage 3 "Generate metadata (dari JPG kecil)"
-    $runBat = Join-Path $GenDir "run.bat"
-    $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $MetadataBackend"
-    Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
-    cmd /c $genCmd
-    if ($LASTEXITCODE -ne 0) { throw "Generate metadata gagal (exit $LASTEXITCODE) - lihat $rawDir\processing.log." }
-    $genCsv = Join-Path $rawDir "metadata.csv"
-    if (-not (Test-Path -LiteralPath $genCsv)) { throw "metadata.csv tidak ditemukan di $rawDir." }
     $batch = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
     $adobeCsv = Join-Path $metaDir ($batch + "_metadata_adobe.csv")
     $dreamCsv = Join-Path $metaDir ($batch + "_metadata_dreamstime.csv")
-    $haveSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg" -ErrorAction SilentlyContinue | % { $_.BaseName })
-    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator $haveSmall
-    Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati) -> {3}" -f $m.OK, $m.Failed, $m.FilteredOut, $metaDir) -ForegroundColor Green
-    Add-Stage 3 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
-    if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
+    $genCsv = Join-Path $rawDir "metadata.csv"
+    $haveSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg" -ErrorAction SilentlyContinue | ForEach-Object { $_.BaseName })
+    $reuseFull = ((-not $Force) -and
+      (Test-EmbedCsvComplete $adobeCsv $haveSmall) -and
+      (Test-EmbedCsvComplete $dreamCsv $haveSmall) -and
+      (Test-EmbedCsvIdentity $adobeCsv $Copyright $Creator) -and
+      (Test-EmbedCsvIdentity $dreamCsv $Copyright $Creator))
+    if ($reuseFull) {
+      $nReuse = @(Import-Csv -LiteralPath $adobeCsv -Encoding UTF8).Count
+      Write-Host ("  Metadata sudah lengkap ({0} baris), reuse tanpa API -> {1}" -f $nReuse, $metaDir) -ForegroundColor Green
+      Add-Stage 3 "Metadata" "SKIP" "$nReuse baris reuse (jalur JPG selesai)"
+      $m = [pscustomobject]@{ OK = $nReuse; Failed = 0; FilteredOut = 0 }
+    } else {
+      $genComplete = ((-not $Force) -and (Test-GenCsvComplete $genCsv $haveSmall))
+      if ($genComplete) {
+        Write-Host "  metadata.csv mentah sudah lengkap, rebuild 2 CSV embed tanpa API." -ForegroundColor Yellow
+      } else {
+        $runBat = Join-Path $GenDir "run.bat"
+        $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)"
+        Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
+        cmd /c $genCmd
+        if ($LASTEXITCODE -ne 0) { throw "Generate metadata gagal (exit $LASTEXITCODE) - lihat $rawDir\processing.log." }
+        if (-not (Test-Path -LiteralPath $genCsv)) { throw "metadata.csv tidak ditemukan di $rawDir." }
+      }
+      $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator $haveSmall
+      Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati) -> {3}" -f $m.OK, $m.Failed, $m.FilteredOut, $metaDir) -ForegroundColor Green
+      Add-Stage 3 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
+      if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
+    }
 
     # ---------- TAHAP 4V: trace ----------
     Write-Stage 4 "Trace JPG kecil -> SVG (vtracer)"
+    $missPre4v = @(Get-MissingBasenames $small $svgDir "*.svg" "*.jpg")
+    $nSvgPre = @(Get-ChildItem -LiteralPath $svgDir -File -Filter "*.svg" -ErrorAction SilentlyContinue).Count
+    if ((-not $Force) -and $missPre4v.Count -gt 0 -and $nSvgPre -gt 0) {
+      Write-Host ("  SVG sudah ada {0}, kurang {1} -> hanya yang belum di-trace." -f $nSvgPre, $missPre4v.Count) -ForegroundColor Yellow
+    }
     $targs = @{ InputDir = $small; OutDir = $svgDir }
     if ($Force) { $targs.Force = $true }
     $partial4v = @()
@@ -551,6 +685,11 @@ function Process-Dir($DirInput, $Idx, $Total) {
 
     # ---------- TAHAP 5V: preview JPG besar ----------
     Write-Stage 5 ("Render preview JPG (lebar {0}px)" -f $PreviewWidth)
+    $missPre5v = @(Get-MissingBasenames $svgDir $prevDir "*.jpg" "*.svg")
+    $nPrevPre = @(Get-ChildItem -LiteralPath $prevDir -File -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
+    if ((-not $Force) -and $missPre5v.Count -gt 0 -and $nPrevPre -gt 0) {
+      Write-Host ("  Preview sudah ada {0}, kurang {1} -> hanya yang belum di-render." -f $nPrevPre, $missPre5v.Count) -ForegroundColor Yellow
+    }
     $pargs = @{ SvgDir = $svgDir; OutDir = $prevDir; Width = $PreviewWidth }
     if ($Force) { $pargs.Force = $true }
     $partial5v = @()
@@ -576,6 +715,11 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $vecSrc = $svgDir; $vecKind = "svg"; $vecFilter = "*.svg"
     if ($Target -eq "EPS") {
       Write-Stage 6 "Convert SVG -> EPS (Inkscape)"
+      $missPre6v = @(Get-MissingBasenames $svgDir $epsDir "*.eps" "*.svg")
+      $nEpsPre = @(Get-ChildItem -LiteralPath $epsDir -File -Filter "*.eps" -ErrorAction SilentlyContinue).Count
+      if ((-not $Force) -and $missPre6v.Count -gt 0 -and $nEpsPre -gt 0) {
+        Write-Host ("  EPS sudah ada {0}, kurang {1} -> hanya yang belum di-convert." -f $nEpsPre, $missPre6v.Count) -ForegroundColor Yellow
+      }
       $eargs = @{ SvgDir = $svgDir; OutDir = $epsDir }
       if ($Force) { $eargs.Force = $true }
       $partial6v = @()
@@ -599,10 +743,11 @@ function Process-Dir($DirInput, $Idx, $Total) {
       $vecSrc = $epsDir; $vecKind = "eps"; $vecFilter = "*.eps"
     }
 
-    # ---------- TAHAP 7V: embed paket vektor ----------
+    # ---------- TAHAP 7V: embed paket vektor (folder terpisah, JPG tidak ditimpa) ----------
     Write-Stage 7 "Embed metadata vektor (Adobe + Dreamstime)"
-    # Bersihkan pasangan basi bila target diganti di tengah jalan
-    # (mis. run EPS lalu SVG): paket EPS = .eps+.jpg, paket SVG = .svg+.jpg.
+    # Paket vektor di folder terpisah (for_adobe_svg/for_adobe_eps) agar
+    # hasil jalur JPG (for_adobe/for_dreamstime) tidak tertimpa.
+    # Bersihkan pasangan basi di dalam folder vektor sendiri saja.
     $staleFilter = if ($vecKind -eq "svg") { "*.eps" } else { "*.svg" }
     foreach ($d in @($forAdobe, $forDream)) {
       Get-ChildItem -LiteralPath $d -File -Filter $staleFilter -ErrorAction SilentlyContinue |
@@ -697,7 +842,7 @@ function Main {
     $Creator = Ask-Default "Creator" $Creator
   }
   # Backend metadata dikunci ke API (lokal dinonaktifkan - terlalu lambat).
-  $MetadataBackend = "api"
+  $script:MetadataBackend = "api"
 
   if ($batch) {
     Write-Host ("  Antrean: {0} direktori, config default semua." -f $dirList.Count) -ForegroundColor Yellow

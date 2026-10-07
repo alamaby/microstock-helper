@@ -133,10 +133,19 @@ Satu pintu untuk seluruh alur: rename `001_...` (in-place) → convert JPG kecil
 Cabang target:
 
 - `JPG`: convert JPG kecil → upscale 5x (Upscayl) → JPG final → embed triple-sync.
-- `SVG`: trace JPG kecil → SVG (`Trace-Svg`, vtracer color-cluster/cutout/spline) → render preview JPG besar dari SVG (Inkscape + ffmpeg) → embed (`Embed-VectorMetadata`): JPG triple-sync + SVG injeksi `<title>`/`<desc>`/RDF. Paket `for_adobe/` + `for_dreamstime/` berisi pasangan `.jpg`+`.svg` basename sama + salinan CSV agensi.
-- `EPS`: sama seperti SVG, ditambah SVG→EPS (Inkscape CLI). Paket berisi pasangan `.jpg`+`.eps` saja (SVG intermediate tidak dikirim). EPS di-embed XMP-dc via ExifTool.
+- `SVG`: trace JPG kecil → SVG (`Trace-Svg`, vtracer color-cluster/cutout/spline) → render preview JPG besar dari SVG (Inkscape + ffmpeg) → embed (`Embed-VectorMetadata`): JPG triple-sync + SVG injeksi `<title>`/`<desc>`/RDF. Paket `for_adobe_svg/` + `for_dreamstime_svg/` berisi pasangan `.jpg`+`.svg` basename sama + salinan CSV agensi.
+- `EPS`: sama seperti SVG, ditambah SVG→EPS (Inkscape CLI). Paket `for_adobe_eps/` + `for_dreamstime_eps/` berisi pasangan `.jpg`+`.eps` saja (SVG intermediate tidak dikirim). EPS di-embed XMP-dc via ExifTool.
 
 Catatan: ExifTool tidak mendukung tulis SVG, jadi metadata SVG adalah injeksi XML best-effort (CSV pendamping tetap sumber kebenaran). Uji upload 1 file per agensi dulu sebelum batch besar.
+
+Lanjut dari jalur JPG (resume otomatis): bila satu direktori sudah selesai `-Target JPG` (contoh `witch_halloween\generated-1`), jalankan target vektor pada direktori yang sama — tahap yang sudah beres di-skip, hanya yang belum dikerjakan:
+
+```powershell
+.\Orchestrate-Stock.ps1 -SourceDir "C:\Side\Microstock\witch_halloween\generated-1" -Target SVG -Force
+.\Orchestrate-Stock.ps1 -SourceDir "C:\Side\Microstock\witch_halloween\generated-1" -Target EPS -Force
+```
+
+Yang terjadi: banner `Resume` menampilkan status JPG/SVG/EPS; convert JPG kecil di-skip bila `02_jpg_small` lengkap; metadata di-reuse tanpa API bila 2 CSV embed sudah menutupi semua JPG kecil (rebuild tanpa API bila `-Copyright`/`-Creator` berubah; generate API hanya bila ada file baru yang belum termetadata); trace/preview/EPS hanya memproses file yang belum ada. Paket vektor ditulis ke folder terpisah (`for_adobe_svg/`, `for_dreamstime_svg/`, `for_adobe_eps/`, `for_dreamstime_eps/`) sehingga upload JPG (`for_adobe/`, `for_dreamstime/`) tidak tertimpa.
 
 Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan. Run ulang aman: file selesai di-skip, file korup/setengah-jadi otomatis diproses ulang, sisa interupsi rename (`.renametmp` yatim) dipulihkan otomatis.
 
