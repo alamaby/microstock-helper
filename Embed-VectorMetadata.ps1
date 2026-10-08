@@ -137,6 +137,44 @@ function Test-VecReal([string]$path, [string]$kind) {
   } catch { return $false }
 }
 
+function Invoke-ExifTool([string[]]$Arguments) {
+  # SEMUA panggilan exiftool lewat sini. EAP=Continue + 2>&1: stderr native
+  # ditangkap sebagai ErrorRecord (tidak pernah jadi exception semu, tidak
+  # bocor ke konsol). Peringatan jinak "FileName encoding must be specified"
+  # (nama file non-ASCII spt …; tulis tetap berhasil, terverifikasi
+  # baca-balik) dibuang bersama baris lanjutan path-nya; stderr lain
+  # ditampilkan; stdout dikembalikan. Return @{ Exit; Output }.
+  $oldEap = $ErrorActionPreference
+  $raw = @()
+  $code = -1
+  try {
+    $ErrorActionPreference = "Continue"
+    $raw = @(& $ExifTool @Arguments 2>&1)
+    $code = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $oldEap }
+  $out = @()
+  $skipPathNext = $false
+  foreach ($item in $raw) {
+    if ($item -is [System.Management.Automation.ErrorRecord]) {
+      $msg = ""
+      try { $msg = [string]$item.Exception.Message } catch { $msg = "" }
+      if ([string]::IsNullOrWhiteSpace($msg)) { try { $msg = [string]$item } catch { $msg = "" } }
+      if ($msg -match 'FileName encoding must be specified') { $skipPathNext = $true; continue }
+      $oneLine = ($msg -split "`r?`n" | Where-Object { $_ -match '\S' })
+      if ($skipPathNext -and $oneLine.Count -eq 1 -and $oneLine[0] -match '\.(jpe?g|png|svg|eps)\s*$') {
+        $skipPathNext = $false; continue
+      }
+      $skipPathNext = $false
+      $shown = ($oneLine -join " | ")
+      if ($shown -match '\S') { Write-Host ("  [exiftool] {0}" -f $shown.Trim()) -ForegroundColor DarkGray }
+      continue
+    }
+    $skipPathNext = $false
+    $out += [string]$item
+  }
+  return @{ Exit = $code; Output = $out }
+}
+
 function Invoke-ExifJpg($file, $r, $kws) {
   $reset = @("-XMP-dc:Title=", "-IPTC:ObjectName=", "-XMP-photoshop:Headline=",
     "-XMP-dc:Description=", "-IPTC:Caption-Abstract=", "-EXIF:ImageDescription=",
@@ -144,7 +182,7 @@ function Invoke-ExifJpg($file, $r, $kws) {
   if ($r.Copyright) { $reset += "-XMP-dc:Rights=", "-IPTC:CopyrightNotice=", "-EXIF:Copyright=" }
   if ($r.Creator) { $reset += "-XMP-dc:Creator=", "-IPTC:By-line=", "-EXIF:Artist=" }
   if (-not $KeepBackup) { $reset = @("-overwrite_original") + $reset }
-  & $ExifTool ($reset + @("-P", "-m", $file)) | Out-Null
+  $null = Invoke-ExifTool ($reset + @("-P", "-m", $file))
   $args = @()
   if (-not $KeepBackup) { $args += "-overwrite_original" }
   $args += "-P", "-m", "-IPTC:CodedCharacterSet=UTF8"
@@ -154,8 +192,7 @@ function Invoke-ExifJpg($file, $r, $kws) {
   if ($r.Copyright) { $args += "-XMP-dc:Rights=$($r.Copyright)", "-IPTC:CopyrightNotice=$($r.Copyright)", "-EXIF:Copyright=$($r.Copyright)" }
   if ($r.Creator) { $args += "-XMP-dc:Creator=$($r.Creator)", "-IPTC:By-line=$($r.Creator)", "-EXIF:Artist=$($r.Creator)" }
   $args += $file
-  & $ExifTool @args | Out-Null
-  return ($LASTEXITCODE -eq 0)
+  return ((Invoke-ExifTool $args).Exit -eq 0)
 }
 
 function Invoke-ExifEps($file, $r, $kws) {
@@ -164,7 +201,7 @@ function Invoke-ExifEps($file, $r, $kws) {
   if ($r.Copyright) { $reset += "-XMP-dc:Rights=" }
   if ($r.Creator) { $reset += "-XMP-dc:Creator=" }
   if (-not $KeepBackup) { $reset = @("-overwrite_original") + $reset }
-  & $ExifTool ($reset + @("-P", "-m", $file)) | Out-Null
+  $null = Invoke-ExifTool ($reset + @("-P", "-m", $file))
   $args = @()
   if (-not $KeepBackup) { $args += "-overwrite_original" }
   $args += "-P", "-m"
@@ -173,8 +210,7 @@ function Invoke-ExifEps($file, $r, $kws) {
   if ($r.Copyright) { $args += "-XMP-dc:Rights=$($r.Copyright)" }
   if ($r.Creator) { $args += "-XMP-dc:Creator=$($r.Creator)" }
   $args += $file
-  & $ExifTool @args | Out-Null
-  return ($LASTEXITCODE -eq 0)
+  return ((Invoke-ExifTool $args).Exit -eq 0)
 }
 
 function Set-SvgMetadata($file, $r, $kws) {
@@ -290,13 +326,13 @@ foreach ($r in $rows) {
   Copy-Item (Join-Path $VecDir $pair2.File) $dstVec -Force
 
   if (-not (Invoke-ExifJpg $dstJpg $r $kws)) { Write-Warning "GAGAL embed JPG: $base"; $fail++; continue }
-  $jpgTitle = (& $ExifTool -s -s -s -XMP-dc:Title $dstJpg)
+  $jpgTitle = (Invoke-ExifTool @("-s", "-s", "-s", "-XMP-dc:Title", $dstJpg)).Output
   if ($jpgTitle -ne $r.Title) { Write-Warning "PERIKSA JPG $base (Title tak cocok baca-balik)"; $fail++; continue }
 
   if ($vk -eq "eps") {
     if (-not (Invoke-ExifEps $dstVec $r $kws)) { Write-Warning "GAGAL embed EPS: $base"; $fail++; continue }
-    $eTitle = (& $ExifTool -s -s -s -XMP-dc:Title $dstVec)
-    $eKw = @((& $ExifTool -s -s -s -XMP-dc:Subject $dstVec) -split ',\s*' | Where-Object { $_ })
+    $eTitle = (Invoke-ExifTool @("-s", "-s", "-s", "-XMP-dc:Title", $dstVec)).Output
+    $eKw = @(((Invoke-ExifTool @("-s", "-s", "-s", "-XMP-dc:Subject", $dstVec)).Output) -split ',\s*' | Where-Object { $_ })
     if ($eTitle -ne $r.Title -or $eKw.Count -ne $kws.Count) {
       Write-Warning "PERIKSA EPS $base [KW=$($eKw.Count)/$($kws.Count), Title OK: $($eTitle -eq $r.Title)]"; $fail++; continue
     }
