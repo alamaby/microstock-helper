@@ -694,7 +694,8 @@ function Process-Dir($DirInput, $Idx, $Total) {
       (Test-EmbedCsvComplete $dreamCsv $haveSmall) -and
       (Test-EmbedCsvIdentity $adobeCsv $Copyright $Creator) -and
       (Test-EmbedCsvIdentity $dreamCsv $Copyright $Creator) -and
-      (Test-EmbedCsvHasColumn $adobeCsv "Category"))
+      (Test-EmbedCsvHasColumn $adobeCsv "Category") -and
+      (Test-EmbedCsvHasColumn $adobeCsv "Filename"))
     if ($reuseFull) {
       $nReuse = @(Import-Csv -LiteralPath $adobeCsv -Encoding UTF8).Count
       Write-Host ("  Metadata sudah lengkap ({0} baris), reuse tanpa API -> {1}" -f $nReuse, $metaDir) -ForegroundColor Green
