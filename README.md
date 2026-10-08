@@ -85,7 +85,7 @@ Tulis Title/Description/Keywords/Copyright/Creator dari CSV ke file gambar via E
 | `-DryRun` | Cek + validasi tanpa menulis |
 | `-KeepBackup` | Simpan file backup `_original` (default: timpa langsung) |
 
-Selalu mulai dengan `-DryRun`. Pencocokan file cerdas via nomor 3 digit bila nama CSV tidak persis sama. Batas: Title Adobe ideal ≤70 karakter, keywords Adobe maks 49 (frasa), Dreamstime ~80 kata tunggal.
+Selalu mulai dengan `-DryRun`. Pencocokan file cerdas via nomor 3 digit bila nama CSV tidak persis sama. Batas: Title Adobe ideal ≤70 karakter, keywords Adobe maks 49 (frasa), Dreamstime ~80 kata tunggal. Kolom `Category` pada CSV Adobe diisi otomatis dari kategori hasil generator yang dipetakan ke daftar kategori portal resmi (helpx "Choose the right category"); `Other`/tak dikenal dibiarkan kosong agar Sensei mengusulkan sendiri.
 
 ## 5. Upscale — upscale via Upscayl CLI
 

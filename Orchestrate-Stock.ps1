@@ -255,6 +255,58 @@ function Invoke-Child($File, [hashtable]$Arguments) {
   }
 }
 
+# ---------- Adobe Stock category mapping ----------
+# Generator mengeluarkan nama kategori (LOV 20 nilai di
+# microstock-metadata-generator/.../constants.py, warisan taksonomi Fotolia).
+# CSV Adobe memakai kolom Category terpisah; nilai diisi nama kategori portal
+# resmi yang paling dekat ("closest one", sesuai artikel "Choose the right
+# category for your content", helpx, Jun 2026). "Other" dikosongkan agar
+# Sensei/portal mengusulkan sendiri daripada kategori yang salah.
+# CATATAN: spec CSV resmi meminta NOMOR kategori (dari dialog upload-CSV
+# portal), bukan nama. Kolom ini memakai NAMA agar bisa diverifikasi dari
+# artikel; tukar ke nomor bila daftar nomor sudah dikonfirmasi dari portal.
+$script:AdobeCategoryMap = @{
+  "animals"                = "Animals"
+  "architecture"           = "Buildings and architecture"
+  "backgrounds and textures" = "Graphic resources"
+  "beauty and fashion"     = "People"
+  "business"               = "Business"
+  "education"              = "People"
+  "food and drink"         = "Food"
+  "healthcare and medical" = "Science"
+  "holidays"               = "Culture and religion"
+  "industrial"             = "Industry"
+  "nature"                 = "The environment"
+  "people"                 = "People"
+  "religion and culture"   = "Culture and religion"
+  "science"                = "Science"
+  "signs and symbols"      = "Graphic resources"
+  "sports and fitness"     = "Sports"
+  "technology"             = "Technology"
+  "transportation"         = "Transport"
+  "travel"                 = "Travel"
+  "other"                  = ""
+}
+
+function Get-AdobeCategory([string]$GeneratorCategory) {
+  # Nama kategori generator -> nama kategori portal Adobe terdekat.
+  # Tak dikenal/kosong/"Other" -> "" (kolom dibiarkan kosong).
+  $k = ([string]$GeneratorCategory).Trim().ToLower()
+  if ([string]::IsNullOrWhiteSpace($k)) { return "" }
+  if ($script:AdobeCategoryMap.ContainsKey($k)) { return $script:AdobeCategoryMap[$k] }
+  return ""
+}
+
+function Test-EmbedCsvHasColumn([string]$CsvPath, [string]$Column) {
+  # True bila file CSV ada dan punya kolom bernama $Column.
+  try {
+    if (-not (Test-Path -LiteralPath $CsvPath -PathType Leaf)) { return $false }
+    $first = Import-Csv -LiteralPath $CsvPath -Encoding UTF8 -ErrorAction Stop | Select-Object -First 1
+    if (-not $first) { return $false }
+    return ($null -ne ($first.PSObject.Properties | Where-Object { $_.Name -ieq $Column } | Select-Object -First 1))
+  } catch { return $false }
+}
+
 # ---------- Transform: generator CSV -> 2 CSV embed ----------
 function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator, [string[]]$OnlyBasenames = @()) {
   # Resume: baris "skipped" menyimpan metadata penuh (prior_items) dan
@@ -287,6 +339,7 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
       Title       = $title70
       Description = $r.description
       Keywords    = ($phrases -join ", ")
+      Category    = (Get-AdobeCategory $r.category)
       Copyright   = $Copyright
       Creator     = $Creator
     }
@@ -308,7 +361,8 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
     }
   }
   $cols = @("SourceFile", "Title", "Description", "Keywords", "Copyright", "Creator")
-  $adobe | Select-Object $cols | Export-Csv $AdobeCsv -Encoding UTF8 -NoTypeInformation
+  $adobeCols = @("SourceFile", "Title", "Description", "Keywords", "Category", "Copyright", "Creator")
+  $adobe | Select-Object $adobeCols | Export-Csv $AdobeCsv -Encoding UTF8 -NoTypeInformation
   $dream | Select-Object $cols | Export-Csv $DreamCsv -Encoding UTF8 -NoTypeInformation
   return [pscustomobject]@{ OK = $rows.Count; Failed = $failed; FilteredOut = $filteredOut }
 }
@@ -631,7 +685,8 @@ function Process-Dir($DirInput, $Idx, $Total) {
       (Test-EmbedCsvComplete $adobeCsv $haveSmall) -and
       (Test-EmbedCsvComplete $dreamCsv $haveSmall) -and
       (Test-EmbedCsvIdentity $adobeCsv $Copyright $Creator) -and
-      (Test-EmbedCsvIdentity $dreamCsv $Copyright $Creator))
+      (Test-EmbedCsvIdentity $dreamCsv $Copyright $Creator) -and
+      (Test-EmbedCsvHasColumn $adobeCsv "Category"))
     if ($reuseFull) {
       $nReuse = @(Import-Csv -LiteralPath $adobeCsv -Encoding UTF8).Count
       Write-Host ("  Metadata sudah lengkap ({0} baris), reuse tanpa API -> {1}" -f $nReuse, $metaDir) -ForegroundColor Green
