@@ -138,14 +138,16 @@ Cabang target:
 
 Catatan: ExifTool tidak mendukung tulis SVG, jadi metadata SVG adalah injeksi XML best-effort (CSV pendamping tetap sumber kebenaran). Uji upload 1 file per agensi dulu sebelum batch besar.
 
-Lanjut dari jalur JPG (resume otomatis): bila satu direktori sudah selesai `-Target JPG` (contoh `witch_halloween\generated-1`), jalankan target vektor pada direktori yang sama — tahap yang sudah beres di-skip, hanya yang belum dikerjakan:
+Lanjut dari jalur JPG (resume otomatis): bila satu direktori sudah selesai `-Target JPG` (contoh `witch_halloween\generated-1`), jalankan target vektor pada direktori yang sama **tanpa** `-Force` — tahap yang sudah beres di-skip, hanya yang belum dikerjakan:
 
 ```powershell
-.\Orchestrate-Stock.ps1 -SourceDir "C:\Side\Microstock\witch_halloween\generated-1" -Target SVG -Force
-.\Orchestrate-Stock.ps1 -SourceDir "C:\Side\Microstock\witch_halloween\generated-1" -Target EPS -Force
+# Resume SVG (lanjutkan dari JPG yang sudah selesai):
+.\Orchestrate-Stock.ps1 -SourceDir "C:\Side\Microstock\witch_halloween\generated-1" -Target SVG -Scale 5 -Copyright "alamaby" -Creator "alamaby"
+# Resume EPS:
+.\Orchestrate-Stock.ps1 -SourceDir "C:\Side\Microstock\witch_halloween\generated-1" -Target EPS -Scale 5 -Copyright "alamaby" -Creator "alamaby"
 ```
 
-Yang terjadi: banner `Resume` menampilkan status JPG/SVG/EPS; convert JPG kecil di-skip bila `02_jpg_small` lengkap; metadata di-reuse tanpa API bila 2 CSV embed sudah menutupi semua JPG kecil (rebuild tanpa API bila `-Copyright`/`-Creator` berubah; generate API hanya bila ada file baru yang belum termetadata); trace/preview/EPS hanya memproses file yang belum ada. Paket vektor ditulis ke folder terpisah (`for_adobe_svg/`, `for_dreamstime_svg/`, `for_adobe_eps/`, `for_dreamstime_eps/`) sehingga upload JPG (`for_adobe/`, `for_dreamstime/`) tidak tertimpa.
+Penting: **jangan pakai `-Force` untuk resume** — `-Force` artinya ulangi semua dari awal (convert ulang, generate ulang). Tanpa `-Force`: banner `Resume` menampilkan status JPG/SVG/EPS; convert JPG kecil di-skip bila `02_jpg_small` lengkap; metadata di-reuse tanpa API bila 2 CSV embed sudah menutupi semua JPG kecil (rebuild tanpa API bila `-Copyright`/`-Creator` berubah; generate API hanya bila ada file baru yang belum termetadata); trace/preview/EPS hanya memproses file yang belum ada (file korup/setengah-jadi otomatis diproses ulang). Paket vektor ditulis ke folder terpisah (`for_adobe_svg/`, `for_dreamstime_svg/`, `for_adobe_eps/`, `for_dreamstime_eps/`) sehingga upload JPG (`for_adobe/`, `for_dreamstime/`) tidak tertimpa.
 
 Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan. Run ulang aman: file selesai di-skip, file korup/setengah-jadi otomatis diproses ulang, sisa interupsi rename (`.renametmp` yatim) dipulihkan otomatis.
 

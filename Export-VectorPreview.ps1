@@ -128,13 +128,33 @@ for ($idx = 0; $idx -lt $files.Count; $idx++) {
   $tmpSvg = Join-Path $TmpDir "p_in.svg"
   $tmpPng = Join-Path $TmpDir "p_mid.png"
   $tmpJpg = Join-Path $TmpDir "p_out.jpg"
-  Remove-Item $tmpSvg, $tmpPng, $tmpJpg -Force -ErrorAction SilentlyContinue
+  $tmpLog = Join-Path $TmpDir "p_ffmpeg.log"
+  Remove-Item $tmpSvg, $tmpPng, $tmpJpg, $tmpLog -Force -ErrorAction SilentlyContinue
   try {
     Copy-Item -LiteralPath $f.FullName -Destination $tmpSvg -Force
-    & $Inkscape $tmpSvg --export-type=png --export-width=$Width --export-filename=$tmpPng 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $tmpPng)) { throw "inkscape export PNG gagal (exit $LASTEXITCODE)." }
-    & ffmpeg -y -loglevel warning -i "$tmpPng" -q:v $Quality "$tmpJpg" 2>$null
-    if ($LASTEXITCODE -ne 0) { throw "ffmpeg PNG->JPG gagal (exit $LASTEXITCODE)." }
+    # Native exe dipanggil dengan EAP=Continue sementara: teks stderr TIDAK boleh
+    # menjadi exception semu (terbukti: ffmpeg 9 menulis peringatan image2 ke
+    # stderr walau JPG valid sudah tercipta, dan EAP=Stop mengubahnya jadi
+    # throw). Status dinilai dari exit code + validasi file saja.
+    $oldEap = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = "Continue"
+      & $Inkscape $tmpSvg --export-type=png --export-width=$Width --export-filename=$tmpPng 2>$null | Out-Null
+      $inkCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldEap }
+    if ($inkCode -ne 0 -or -not (Test-Path -LiteralPath $tmpPng)) { throw "inkscape export PNG gagal (exit $inkCode)." }
+    try {
+      $ErrorActionPreference = "Continue"
+      # -update 1 -frames:v 1: obat resmi untuk error image2 ffmpeg 9
+      # ("...does not contain an image sequence pattern...") pada output 1 gambar.
+      & ffmpeg -y -loglevel warning -i "$tmpPng" -frames:v 1 -update 1 -q:v $Quality "$tmpJpg" 2> $tmpLog
+      $ffCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldEap }
+    if ($ffCode -ne 0) {
+      $tail = @((Get-Content -LiteralPath $tmpLog -Tail 3 -ErrorAction SilentlyContinue) -join " | ")
+      if ([string]::IsNullOrWhiteSpace($tail)) { $tail = "(tanpa pesan)" }
+      throw "ffmpeg PNG->JPG gagal (exit $ffCode): $tail"
+    }
     if (-not (Test-JpgOk $tmpJpg)) { throw "hasil JPG tidak valid." }
     $tmpDest = "$dest.tmp.jpg"
     Copy-Item $tmpJpg -Destination $tmpDest -Force
@@ -146,7 +166,7 @@ for ($idx = 0; $idx -lt $files.Count; $idx++) {
     Write-Host "   GAGAL: $($_.Exception.Message)" -ForegroundColor Red
     $failed++; $failedFiles += $f.FullName
   } finally {
-    Remove-Item $tmpSvg, $tmpPng, $tmpJpg -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmpSvg, $tmpPng, $tmpJpg, $tmpLog -Force -ErrorAction SilentlyContinue
   }
   $done++
   Write-Host "   $(Show-Bar $done $files.Count)" -ForegroundColor DarkGray
