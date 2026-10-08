@@ -3,7 +3,7 @@
   Embed metadata Adobe Stock + Dreamstime ke paket vektor (JPG+SVG / JPG+EPS).
 
 .DESCRIPTION
-  Membaca CSV (SourceFile,Title,Description,Keywords,Copyright,Creator),
+  Membaca CSV (Filename/SourceFile,Title,Description,Keywords,Copyright,Creator),
   memasangkan tiap baris dengan JPG preview (di JpgDir) dan file vektor
   (di VecDir) berdasar BASENAME yang sama (ekstensi diabaikan), menyalin
   keduanya ke OutDir, lalu meng-embed metadata:
@@ -86,6 +86,12 @@ function Get-FileNumber([string]$name) {
     elseif ($score -eq $bestScore -and $best -ne $m.Groups[1].Value) { $best = $null }
   }
   return $best
+}
+
+function Get-CsvSourceFile($row) {
+  # Template resmi Adobe memakai header Filename; CSV lama memakai SourceFile.
+  if ($row.Filename) { return $row.Filename }
+  return $row.SourceFile
 }
 
 function Find-Pair($dirFiles, [string]$csvName, [string[]]$exts) {
@@ -254,10 +260,11 @@ Write-Host ""
 $isDream = $CsvPath -match "dreamstime"
 foreach ($r in $rows) {
   $i++
-  $pair1 = Find-Pair $jpgFiles $r.SourceFile @(".jpg", ".jpeg")
-  $pair2 = Find-Pair $vecFiles $r.SourceFile $vecExts
-  if (-not $pair1.File) { Write-Warning "SKIP (JPG tak cocok): $($r.SourceFile)"; $fail++; Show-Bar $i $rows.Count $r.SourceFile; continue }
-  if (-not $pair2.File) { Write-Warning "SKIP (vektor tak cocok): $($r.SourceFile)"; $fail++; Show-Bar $i $rows.Count $r.SourceFile; continue }
+  $srcName = Get-CsvSourceFile $r
+  $pair1 = Find-Pair $jpgFiles $srcName @(".jpg", ".jpeg")
+  $pair2 = Find-Pair $vecFiles $srcName $vecExts
+  if (-not $pair1.File) { Write-Warning "SKIP (JPG tak cocok): $srcName"; $fail++; Show-Bar $i $rows.Count $srcName; continue }
+  if (-not $pair2.File) { Write-Warning "SKIP (vektor tak cocok): $srcName"; $fail++; Show-Bar $i $rows.Count $srcName; continue }
   $vk = [IO.Path]::GetExtension($pair2.File).TrimStart(".").ToLower()
 
   if (-not (Test-JpgReal (Join-Path $JpgDir $pair1.File))) {

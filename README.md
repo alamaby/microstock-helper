@@ -78,7 +78,7 @@ Tulis Title/Description/Keywords/Copyright/Creator dari CSV ke file gambar via E
 
 | Param | Keterangan |
 |---|---|
-| `-CsvPath` | CSV `SourceFile,Title,Description,Keywords,Copyright,Creator` |
+| `-CsvPath` | CSV Adobe (`Filename,Title,Description,Keywords,Category,Releases,Copyright,Creator`) atau Dreamstime (`SourceFile,...`, tanpa `Category`/`Releases`) — pembaca menerima kedua nama kolom file (`Filename`/`SourceFile`) |
 | `-JpgDir` | Folder sumber gambar |
 | `-OutDir` | Folder output (default: turunan folder sumber; kosongkan untuk tulis di tempat) |
 | `-ExifTool` | Path ExifTool |

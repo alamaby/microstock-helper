@@ -137,16 +137,23 @@ function Get-NormBase([string]$name) {
   return $f.ToLower()
 }
 
+function Get-CsvSourceFile($row) {
+  # Template resmi Adobe memakai header Filename; CSV lama memakai SourceFile.
+  if ($row.Filename) { return $row.Filename }
+  return $row.SourceFile
+}
+
 function Test-EmbedCsvComplete([string]$CsvPath, [string[]]$NeedBasenames) {
   # True bila CSV embed ada dan setiap basename di $NeedBasenames
-  # punya baris (bandingkan via Get-NormBase atas SourceFile).
+  # punya baris (bandingkan via Get-NormBase atas kolom Filename/SourceFile).
   try {
     if (-not (Test-Path -LiteralPath $CsvPath -PathType Leaf)) { return $false }
     if ($NeedBasenames.Count -eq 0) { return $false }
     $have = @{}
     foreach ($r in (Import-Csv -LiteralPath $CsvPath -Encoding UTF8 -ErrorAction Stop)) {
-      if ($r.SourceFile) {
-        $have[(Get-NormBase $r.SourceFile)] = $true
+      $sf = Get-CsvSourceFile $r
+      if ($sf) {
+        $have[(Get-NormBase $sf)] = $true
       }
     }
     foreach ($b in $NeedBasenames) {
@@ -335,11 +342,12 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
     if ($phrases.Count -gt 49) { $phrases = $phrases[0..48] }
     $title70 = if ($r.title.Length -gt 70) { $r.title.Substring(0, 70) } else { $r.title }
     $adobe += [pscustomobject]@{
-      SourceFile  = $r.filename
+      Filename    = $r.filename
       Title       = $title70
       Description = $r.description
       Keywords    = ($phrases -join ", ")
       Category    = (Get-AdobeCategory $r.category)
+      Releases    = ""
       Copyright   = $Copyright
       Creator     = $Creator
     }
@@ -361,7 +369,7 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
     }
   }
   $cols = @("SourceFile", "Title", "Description", "Keywords", "Copyright", "Creator")
-  $adobeCols = @("SourceFile", "Title", "Description", "Keywords", "Category", "Copyright", "Creator")
+  $adobeCols = @("Filename", "Title", "Description", "Keywords", "Category", "Releases", "Copyright", "Creator")
   $adobe | Select-Object $adobeCols | Export-Csv $AdobeCsv -Encoding UTF8 -NoTypeInformation
   $dream | Select-Object $cols | Export-Csv $DreamCsv -Encoding UTF8 -NoTypeInformation
   return [pscustomobject]@{ OK = $rows.Count; Failed = $failed; FilteredOut = $filteredOut }

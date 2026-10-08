@@ -4,7 +4,7 @@
   ke file JPG/PNG via ExifTool (triple-sync IPTC+XMP+EXIF).
 
 .DESCRIPTION
-  Membaca CSV (SourceFile,Title,Description,Keywords,Copyright,Creator),
+  Membaca CSV (Filename/SourceFile,Title,Description,Keywords,Copyright,Creator),
   Keywords dipisah koma. Menulis tiap tag ke 3 grup sekaligus agar
   dibaca kedua agensi:
     Title       -> XMP-dc:Title, IPTC:ObjectName, XMP-photoshop:Headline
@@ -122,6 +122,12 @@ function Get-FileNumber([string]$name) {
   return $best
 }
 
+function Get-CsvSourceFile($row) {
+  # Template resmi Adobe memakai header Filename; CSV lama memakai SourceFile.
+  if ($row.Filename) { return $row.Filename }
+  return $row.SourceFile
+}
+
 function Test-RealFormat($path) {
   # Pastikan isi file sesuai ekstensi (exiftool menolak isi PNG bernama .jpg)
   $ext = [IO.Path]::GetExtension($path).ToLower()
@@ -148,15 +154,16 @@ Write-Host ""
 
 foreach ($r in $rows) {
   $i++
+  $srcName = Get-CsvSourceFile $r
   # 1) nama persis, 2) nomor 3 digit
-  $hit = @($dirFiles | Where-Object { $_ -ieq $r.SourceFile })
+  $hit = @($dirFiles | Where-Object { $_ -ieq $srcName })
   $via = "exact"
   if (-not $hit) {
-    $num = Get-FileNumber $r.SourceFile
+    $num = Get-FileNumber $srcName
     if ($num) { $hit = @($dirFiles | Where-Object { (Get-FileNumber $_) -eq $num }) }
     if ($hit.Count -eq 1) { $via = "#$num" } else { $hit = @() }
   }
-  if (-not $hit) { Write-Warning "SKIP (tak cocok): $($r.SourceFile)"; $fail++; Show-Bar $i $rows.Count $r.SourceFile; continue }
+  if (-not $hit) { Write-Warning "SKIP (tak cocok): $srcName"; $fail++; Show-Bar $i $rows.Count $srcName; continue }
   $actual = $hit[0]
   $src = Join-Path $JpgDir $actual
 
