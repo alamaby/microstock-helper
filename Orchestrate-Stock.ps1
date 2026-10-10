@@ -137,6 +137,93 @@ function Get-NormBase([string]$name) {
   return $f.ToLower()
 }
 
+function Get-SafeUploadName([string]$basename) {
+  $s = $basename -replace "[^\w\-]+", "_"
+  $s = $s -replace "_+", "_"
+  $s = $s.Trim("_", "-", ".")
+  if ([string]::IsNullOrWhiteSpace($s)) { $s = "file" }
+  return $s
+}
+
+function Repair-VecteezyPackage([string]$PkgDir, [string]$CsvFileName) {
+  try {
+    if (-not (Test-Path -LiteralPath $PkgDir -PathType Container)) { return $false }
+    $csvLeaf = Split-Path $CsvFileName -Leaf
+    $files = @(Get-ChildItem -LiteralPath $PkgDir -File | Where-Object { $_.Name -ine $csvLeaf -and $_.Extension -ine ".csv" } | Sort-Object Name)
+    if ($files.Count -eq 0) { return $true }
+
+    # Kumpulkan distinct old basenames (sort deterministik)
+    $distinctBases = @($files | ForEach-Object {
+      $ext = [IO.Path]::GetExtension($_.Name)
+      $_.Name.Substring(0, $_.Name.Length - $ext.Length)
+    } | Select-Object -Unique | Sort-Object)
+
+    $usedNames = @{}
+    $baseMap = @{}
+    $baseMapNorm = @{}
+
+    foreach ($ob in $distinctBases) {
+      $safe = Get-SafeUploadName $ob
+      $target = $safe
+      $suffix = 2
+      while ($usedNames.ContainsKey($target.ToLower())) {
+        $target = "${safe}_${suffix}"
+        $suffix++
+      }
+      $usedNames[$target.ToLower()] = $true
+      $baseMap[$ob] = $target
+      $baseMapNorm[(Get-NormBase $ob)] = $target
+    }
+
+    # Rename file bila berbeda (hindari tabrakan dengan 2 tahap)
+    $renames = @()
+    foreach ($f in $files) {
+      $ext = [IO.Path]::GetExtension($f.Name)
+      $ob = $f.Name.Substring(0, $f.Name.Length - $ext.Length)
+      $nb = $baseMap[$ob]
+      if ($nb -ne $ob) {
+        $newName = $nb + $ext
+        $renames += [pscustomobject]@{ File = $f; OldName = $f.Name; NewName = $newName; Ext = $ext }
+      }
+    }
+
+    if ($renames.Count -gt 0) {
+      foreach ($r in $renames) {
+        $tmpDest = $r.File.FullName + ".sanitmp"
+        Move-Item -LiteralPath $r.File.FullName -Destination $tmpDest -Force
+      }
+      foreach ($r in $renames) {
+        $tmpDest = $r.File.FullName + ".sanitmp"
+        $finalDest = Join-Path $PkgDir $r.NewName
+        Move-Item -LiteralPath $tmpDest -Destination $finalDest -Force
+        Write-Host ("  Sanitasi: {0} -> {1}" -f $r.OldName, $r.NewName) -ForegroundColor Yellow
+      }
+    }
+
+    # Rewrite salinan CSV di dalam $PkgDir
+    if (Test-Path -LiteralPath $CsvFileName -PathType Leaf) {
+      $rows = @(Import-Csv -LiteralPath $CsvFileName -Encoding UTF8)
+      foreach ($r in $rows) {
+        $srcVal = Get-CsvSourceFile $r
+        $norm = Get-NormBase $srcVal
+        if ($baseMapNorm.ContainsKey($norm)) {
+          $r.Filename = $baseMapNorm[$norm]
+        } else {
+          $r.Filename = Get-SafeUploadName $norm
+        }
+      }
+      $rows | Export-Csv -LiteralPath $CsvFileName -Encoding UTF8 -NoTypeInformation
+    } else {
+      Write-Host ("  [!] CSV paket tidak ditemukan: {0}" -f $CsvFileName) -ForegroundColor Yellow
+      return $false
+    }
+    return $true
+  } catch {
+    Write-Host ("  [!] Sanitasi Vecteezy gagal ({0}): {1}" -f $PkgDir, $_.Exception.Message) -ForegroundColor Yellow
+    return $false
+  }
+}
+
 function Get-CsvSourceFile($row) {
   # Template resmi Adobe memakai header Filename; CSV lama memakai SourceFile.
   if ($row.Filename) { return $row.Filename }
@@ -315,7 +402,7 @@ function Test-EmbedCsvHasColumn([string]$CsvPath, [string]$Column) {
 }
 
 # ---------- Transform: generator CSV -> 2 CSV embed ----------
-function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator, [string[]]$OnlyBasenames = @()) {
+function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $VecteezyCsv, $PixabayCsv, $Copyright, $Creator, [string[]]$OnlyBasenames = @()) {
   # Resume: baris "skipped" menyimpan metadata penuh (prior_items) dan
   # tetap layak embed - hanya baris gagal/nyata yang dikecualikan.
   # $OnlyBasenames (opsional): bila non-kosong, lewati baris yang basenamenya
@@ -336,7 +423,7 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
   } else {
     $rows = $allRows
   }
-  $adobe = @(); $dream = @()
+  $adobe = @(); $dream = @(); $vecteezy = @(); $pixabay = @()
   foreach ($r in $rows) {
     $phrases = @($r.keywords -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
     if ($phrases.Count -gt 49) { $phrases = $phrases[0..48] }
@@ -367,12 +454,38 @@ function ConvertTo-EmbedCsvs($GenCsv, $AdobeCsv, $DreamCsv, $Copyright, $Creator
       Copyright   = $Copyright
       Creator     = $Creator
     }
+    $vPhrases = @($phrases); if ($vPhrases.Count -gt 30) { $vPhrases = $vPhrases[0..29] }
+    $pWords = @($words); if ($pWords.Count -gt 25) { $pWords = $pWords[0..24] }
+    $pixTitle = if ($r.title.Length -gt 100) { $r.title.Substring(0, 100) } else { $r.title }
+    $pixDescRaw = if ($r.description) { $r.description } else { $r.title }
+    $pixDesc = if ($pixDescRaw.Length -gt 200) { $pixDescRaw.Substring(0, 200) } else { $pixDescRaw }
+    $vecteezy += [pscustomobject]@{
+      Filename    = $r.filename
+      Title       = $title70
+      Description = $r.description
+      Keywords    = ($vPhrases -join ", ")
+      License     = "free"
+      Copyright   = $Copyright
+      Creator     = $Creator
+    }
+    $pixabay += [pscustomobject]@{
+      Filename    = $r.filename
+      Title       = $pixTitle
+      Description = $pixDesc
+      Keywords    = ($pWords -join ", ")
+      Copyright   = $Copyright
+      Creator     = $Creator
+    }
   }
   $cols = @("SourceFile", "Title", "Description", "Keywords", "Copyright", "Creator")
   $adobeCols = @("Filename", "Title", "Description", "Keywords", "Category", "Releases", "Copyright", "Creator")
+  $vectCols = @("Filename", "Title", "Description", "Keywords", "License", "Copyright", "Creator")
+  $pixCols = @("Filename", "Title", "Description", "Keywords", "Copyright", "Creator")
   $adobe | Select-Object $adobeCols | Export-Csv $AdobeCsv -Encoding UTF8 -NoTypeInformation
   $dream | Select-Object $cols | Export-Csv $DreamCsv -Encoding UTF8 -NoTypeInformation
-  return [pscustomobject]@{ OK = $rows.Count; Failed = $failed; FilteredOut = $filteredOut }
+  $vecteezy | Select-Object $vectCols | Export-Csv $VecteezyCsv -Encoding UTF8 -NoTypeInformation
+  $pixabay | Select-Object $pixCols | Export-Csv $PixabayCsv -Encoding UTF8 -NoTypeInformation
+  return [pscustomobject]@{ OK = $rows.Count; Failed = $failed; FilteredOut = $filteredOut; Vecteezy = $vecteezy.Count; Pixabay = $pixabay.Count }
 }
 
 function Get-ImageExtByMagic([string]$path) {
@@ -405,6 +518,280 @@ function Restore-OrphanTmps([string]$dir) {
   return $n
 }
 
+function Test-UploadReadiness([string]$StockDir, [hashtable]$Packages) {
+  $origEap = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "SilentlyContinue"
+    $reportPath = Join-Path $StockDir "validation_vecteezy_pixabay.txt"
+    $lines = @()
+    $lines += "============================================================"
+    $lines += "LAPORAN VALIDASI KESIAPAN UPLOAD (VECTEEZY & PIXABAY)"
+    $lines += ("Waktu : {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
+    $lines += ("Target: {0}" -f $Target)
+    $lines += "============================================================"
+    $lines += ""
+
+    $totalWarn = 0
+    $hasFfprobe = [bool](Get-Command ffprobe -ErrorAction SilentlyContinue)
+    $hasExif = [bool](Test-Path -LiteralPath $BinExif -PathType Leaf)
+
+    foreach ($pkgKey in ($Packages.Keys | Sort-Object)) {
+      $pkg = $Packages[$pkgKey]
+      $dir = $pkg.Dir
+      $csv = $pkg.Csv
+      $kind = $pkg.Kind
+      $prevDir = $pkg.PreviewDir
+
+      $lines += ("[{0}]" -f $pkgKey)
+      $lines += ("Direktori : {0}" -f $dir)
+      $lines += ("CSV       : {0}" -f $csv)
+
+      $warns = @()
+      $infos = @()
+
+      if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+        $warns += "Direktori paket tidak ditemukan."
+      } else {
+        $filter = if ($kind -eq "photo") { "*.jpg" } elseif ($kind -eq "eps") { "*.eps" } else { "*.svg" }
+        $assetFiles = @(Get-ChildItem -LiteralPath $dir -File -Filter $filter | Sort-Object Name)
+        $lines += ("File      : {0} item ({1})" -f $assetFiles.Count, $filter)
+
+        if (-not $hasFfprobe) {
+          $warns += "ffprobe tidak tersedia di PATH, cek dimensi dan decode ffprobe dilewati."
+        }
+        if (-not $hasExif) {
+          $warns += "ExifTool tidak tersedia, cek profil sRGB dilewati."
+        }
+
+        foreach ($f in $assetFiles) {
+          $fn = $f.Name
+          $len = $f.Length
+
+          # V1: Integritas
+          if ($kind -eq "photo") {
+            $isJpgComplete = $false
+            try {
+              $fs = [IO.File]::OpenRead($f.FullName)
+              $flen = $fs.Length
+              if ($flen -ge 4) {
+                $head = New-Object byte[] 2; [void]$fs.Read($head, 0, 2)
+                $fs.Seek(-2, [IO.SeekOrigin]::End) | Out-Null
+                $tail = New-Object byte[] 2; [void]$fs.Read($tail, 0, 2)
+                $isJpgComplete = ($head[0] -eq 0xFF -and $head[1] -eq 0xD8 -and $tail[0] -eq 0xFF -and $tail[1] -eq 0xD9)
+              }
+              $fs.Close()
+            } catch { $isJpgComplete = $false }
+            if (-not $isJpgComplete) {
+              $warns += ("{0}: Integritas JPG gagal (SOI/EOI rusak/terpotong)." -f $fn)
+            }
+            if ($hasFfprobe) {
+              try {
+                & ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=nw=1:nk=1 -- "$($f.FullName)" 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                  $warns += ("{0}: Decode ffprobe gagal." -f $fn)
+                }
+              } catch {
+                $warns += ("{0}: Decode ffprobe gagal." -f $fn)
+              }
+            }
+          } elseif ($kind -eq "eps") {
+            $isEpsOk = $false
+            try {
+              if ($len -ge 100) {
+                $fs = [IO.File]::OpenRead($f.FullName); $mg = New-Object byte[] 4
+                [void]$fs.Read($mg, 0, 4); $fs.Close()
+                $isEpsOk = ($mg[0] -eq 0x25 -and $mg[1] -eq 0x21 -and $mg[2] -eq 0x50 -and $mg[3] -eq 0x53)
+              }
+            } catch { $isEpsOk = $false }
+            if (-not $isEpsOk) {
+              $warns += ("{0}: Header PostScript %!PS tidak ditemukan." -f $fn)
+            }
+          } elseif ($kind -eq "svg") {
+            $isSvgOk = $false
+            try {
+              if ($len -ge 50) {
+                $head = (Get-Content -LiteralPath $f.FullName -TotalCount 5 -ErrorAction Stop) -join "`n"
+                $isSvgOk = ($head -match "<svg")
+              }
+            } catch { $isSvgOk = $false }
+            if (-not $isSvgOk) {
+              $warns += ("{0}: Tag <svg tidak ditemukan." -f $fn)
+            }
+          }
+
+          # V2: Dimensi via ffprobe
+          if ($hasFfprobe) {
+            if ($kind -eq "photo") {
+              $dimOut = $null
+              try {
+                $dimOut = (& ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 -- "$($f.FullName)" 2>$null)
+              } catch { }
+              if ($dimOut) {
+                $parts = ($dimOut.Trim() -split ",")
+                if ($parts.Count -ge 2) {
+                  $w = [long]$parts[0]; $h = [long]$parts[1]; $mp = $w * $h
+                  if ($mp -lt 4000000 -or $mp -gt 50000000) {
+                    $warns += ("{0}: Dimensi {1}x{2} ({3} MP) di luar batas foto 4-50MP." -f $fn, $w, $h, [math]::Round($mp/1000000, 2))
+                  }
+                }
+              }
+            } else {
+              $proxyPath = Join-Path $dir ($f.BaseName + ".jpg")
+              if (-not (Test-Path -LiteralPath $proxyPath -PathType Leaf) -and $prevDir) {
+                $proxyPath = Join-Path $prevDir ($f.BaseName + ".jpg")
+              }
+              if (Test-Path -LiteralPath $proxyPath -PathType Leaf) {
+                $dimOut = $null
+                try {
+                  $dimOut = (& ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 -- "$proxyPath" 2>$null)
+                } catch { }
+                if ($dimOut) {
+                  $parts = ($dimOut.Trim() -split ",")
+                  if ($parts.Count -ge 2) {
+                    $w = [long]$parts[0]; $h = [long]$parts[1]; $mp = $w * $h
+                    if ($mp -lt 4000000 -or $mp -gt 25000000) {
+                      $warns += ("{0}: Dimensi preview JPG {1}x{2} ({3} MP) di luar batas vektor 4-25MP (MP vektor = proksi preview JPG)." -f $fn, $w, $h, [math]::Round($mp/1000000, 2))
+                    }
+                  }
+                }
+              } else {
+                $warns += ("{0}: Preview JPG pendamping tidak ditemukan untuk proksi MP." -f $fn)
+              }
+            }
+          }
+
+          # V3: Ukuran file
+          if ($kind -eq "photo") {
+            if ($len -lt 1000000 -or $len -gt 50000000) {
+              $warns += ("{0}: Ukuran file {1} bytes di luar batas 1-50MB." -f $fn, $len)
+            }
+          } elseif ($kind -eq "eps") {
+            if ($len -lt 1000000 -or $len -gt 50000000) {
+              $warns += ("{0}: Ukuran EPS {1} bytes di luar batas 1-50MB." -f $fn, $len)
+            }
+          } elseif ($kind -eq "svg") {
+            if ($len -gt 50000000) {
+              $warns += ("{0}: Ukuran SVG {1} bytes > 50MB." -f $fn, $len)
+            }
+          }
+
+          # V4: sRGB warn-only
+          if ($hasExif) {
+            $targetJpg = if ($kind -eq "photo") { $f.FullName } else {
+              $p = Join-Path $dir ($f.BaseName + ".jpg")
+              if (-not (Test-Path -LiteralPath $p) -and $prevDir) { $p = Join-Path $prevDir ($f.BaseName + ".jpg") }
+              $p
+            }
+            if ($targetJpg -and (Test-Path -LiteralPath $targetJpg -PathType Leaf)) {
+              $cs = (& $BinExif -s -s -s -ColorSpace "$targetJpg" 2>$null) -join " "
+              $pd = (& $BinExif -s -s -s -ProfileDescription "$targetJpg" 2>$null) -join " "
+              $comb = "$cs $pd"
+              if ($comb -notmatch "sRGB") {
+                $warns += ("{0}: sRGB tak terkonfirmasi (ColorSpace='{1}', Profile='{2}')." -f (Split-Path $targetJpg -Leaf), $cs.Trim(), $pd.Trim())
+              }
+            }
+          }
+        }
+
+        # V6: Cek CSV paket
+        if (-not (Test-Path -LiteralPath $csv -PathType Leaf)) {
+          $warns += ("CSV paket tidak ditemukan: {0}" -f $csv)
+        } else {
+          $rows = @(Import-Csv -LiteralPath $csv -Encoding UTF8 -ErrorAction SilentlyContinue)
+          $dupTitles = @($rows | Where-Object { $_.Title } | Group-Object Title | Where-Object { $_.Count -gt 1 })
+          foreach ($d in $dupTitles) {
+            $warns += ("Judul duplikat ({0}x): '{1}'" -f $d.Count, $d.Name)
+          }
+
+          $isVect = ($pkgKey -match "vecteezy" -or ($rows.Count -gt 0 -and $rows[0].PSObject.Properties["License"]))
+          $isPix = ($pkgKey -match "pixabay")
+
+          foreach ($r in $rows) {
+            $rFn = $r.Filename
+            $rNorm = Get-NormBase $rFn
+            $matchedAsset = @($assetFiles | Where-Object { (Get-NormBase $_.Name) -ieq $rNorm })
+            if ($matchedAsset.Count -eq 0) {
+              $warns += ("Baris CSV Filename '{0}' tidak cocok dengan file di disk." -f $rFn)
+            }
+            if ($isVect) {
+              if ($rFn -and ($rFn -notmatch '^[\w\-]+$')) {
+                $warns += ("Filename '{0}' mengandung spasi atau karakter tidak aman." -f $rFn)
+              }
+            } else {
+              if ($rFn -and ($rNorm -notmatch '^[\w\-]+$')) {
+                $warns += ("Filename '{0}' mengandung spasi atau karakter tidak aman." -f $rFn)
+              }
+            }
+
+            $kws = @($r.Keywords -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+            if ($isVect) {
+              if ($kws.Count -eq 0) {
+                $warns += ("{0}: Keywords kosong." -f $rFn)
+              } elseif ($kws.Count -gt 30) {
+                $warns += ("{0}: Keywords ({1}) > 30 batas Vecteezy." -f $rFn, $kws.Count)
+              } elseif ($kws.Count -lt 10) {
+                $infos += ("{0}: Keywords ({1}) < 10 (disarankan >= 10)." -f $rFn, $kws.Count)
+              }
+              if ($r.Title -and $r.Title.Length -gt 70) {
+                $warns += ("{0}: Title ({1} ch) > 70 karakter." -f $rFn, $r.Title.Length)
+              }
+              if ($r.License -ne "free") {
+                $warns += ("{0}: License '{1}' bukan 'free'." -f $rFn, $r.License)
+              }
+            }
+
+            if ($isPix) {
+              if ($r.Title -and $r.Title.Length -gt 100) {
+                $warns += ("{0}: Title ({1} ch) > 100 karakter." -f $rFn, $r.Title.Length)
+              }
+              if ($r.Description -and $r.Description.Length -gt 200) {
+                $warns += ("{0}: Description ({1} ch) > 200 karakter." -f $rFn, $r.Description.Length)
+              }
+              if ($kws.Count -gt 25) {
+                $warns += ("{0}: Keywords ({1}) > 25 batas Pixabay." -f $rFn, $kws.Count)
+              }
+            }
+          }
+        }
+      }
+
+      $warns = @($warns | Select-Object -Unique)
+      $infos = @($infos | Select-Object -Unique)
+
+      $lines += "Peringatan :"
+      if ($warns.Count -eq 0 -and $infos.Count -eq 0) {
+        $lines += "  0 WARN - Semua kriteria kesiapan terpenuhi."
+      } else {
+        foreach ($w in $warns) { $lines += ("  [WARN] {0}" -f $w) }
+        foreach ($inf in $infos) { $lines += ("  [INFO] {0}" -f $inf) }
+      }
+      $lines += ""
+      $totalWarn += $warns.Count
+    }
+
+    $lines += "============================================================"
+    $lines += ("TOTAL PERINGATAN (WARN): {0}" -f $totalWarn)
+    $lines += "============================================================"
+    $lines += ""
+    $lines += "=== CHECKLIST UNGGAH MANUAL ==="
+    $lines += "[ ] Pixabay : Centang 'AI-generated' pada formulir upload"
+    $lines += "[ ] Pixabay : Pastikan tidak menampilkan orang nyata, merek/logo, atau meniru gaya artis tertentu"
+    $lines += "[ ] Pixabay : Salin tag/kata kunci dari CSV pendamping ke form upload"
+    $lines += "[ ] Vecteezy: Lisensi 'free' mewajibkan atribusi pada produk akhir pengguna"
+    $lines += "[ ] Vecteezy: Upload FTP menggunakan Filename tanpa ekstensi; web Add Data menerima keduanya"
+    $lines += ""
+
+    [IO.File]::WriteAllLines($reportPath, $lines, [System.Text.Encoding]::UTF8)
+    return $totalWarn
+  } catch {
+    Write-Host ("  [!] Test-UploadReadiness gagal: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+    return 0
+  } finally {
+    $ErrorActionPreference = $origEap
+  }
+}
+
 function Process-Dir($DirInput, $Idx, $Total) {
   # Proses SATU direktori (dipanggil berurutan untuk antrean batch).
   $SourceDir = (Get-Item -LiteralPath $DirInput.Trim().Trim('"').Trim("'")).FullName
@@ -435,7 +822,11 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $forAdobe = Join-Path $stock "for_adobe_eps"
     $forDream = Join-Path $stock "for_dreamstime_eps"
   }
-  foreach ($d in @($stock, $small, $up, $final, $svgDir, $prevDir, $epsDir, $metaDir, $rawDir, $forAdobeJpg, $forDreamJpg, $forAdobe, $forDream)) {
+  $forVectPhoto = Join-Path $stock "for_vecteezy_photo"
+  $forPixPhoto = Join-Path $stock "for_pixabay_photo"
+  $forVectEps = Join-Path $stock "for_vecteezy_eps"
+  $forPixSvg = Join-Path $stock "for_pixabay_svg"
+  foreach ($d in @($stock, $small, $up, $final, $svgDir, $prevDir, $epsDir, $metaDir, $rawDir, $forAdobeJpg, $forDreamJpg, $forAdobe, $forDream, $forVectPhoto, $forPixPhoto, $forVectEps, $forPixSvg)) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
   }
   Start-Transcript -Path (Join-Path $stock "orchestrator.log") -Append | Out-Null
@@ -660,9 +1051,11 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $batch = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
     $adobeCsv = Join-Path $metaDir ($batch + "_metadata_adobe.csv")
     $dreamCsv = Join-Path $metaDir ($batch + "_metadata_dreamstime.csv")
+    $vectCsv = Join-Path $metaDir ($batch + "_metadata_vecteezy.csv")
+    $pixCsv = Join-Path $metaDir ($batch + "_metadata_pixabay.csv")
     $haveFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg" -ErrorAction SilentlyContinue | % { $_.BaseName })
-    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator $haveFinal
-    Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati) -> {3}" -f $m.OK, $m.Failed, $m.FilteredOut, $metaDir) -ForegroundColor Green
+    $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $vectCsv $pixCsv $Copyright $Creator $haveFinal
+    Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati), Vecteezy={3}, Pixabay={4} -> {5}" -f $m.OK, $m.Failed, $m.FilteredOut, $m.Vecteezy, $m.Pixabay, $metaDir) -ForegroundColor Green
     Add-Stage 5 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
     if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
 
@@ -672,10 +1065,37 @@ function Process-Dir($DirInput, $Idx, $Total) {
     if ($code -ne 0) { Write-Host "  [!] Embed Adobe sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
     $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $dreamCsv; JpgDir = $final; OutDir = $forDream }
     if ($code -ne 0) { Write-Host "  [!] Embed Dreamstime sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $vectCsv; JpgDir = $final; OutDir = $forVectPhoto }
+    if ($code -ne 0) { Write-Host "  [!] Embed Vecteezy sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $pixCsv; JpgDir = $final; OutDir = $forPixPhoto }
+    if ($code -ne 0) { Write-Host "  [!] Embed Pixabay sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+
+    Copy-Item -LiteralPath $vectCsv -Destination (Join-Path $forVectPhoto (Split-Path $vectCsv -Leaf)) -Force -ErrorAction SilentlyContinue
+    Copy-Item -LiteralPath $pixCsv -Destination (Join-Path $forPixPhoto (Split-Path $pixCsv -Leaf)) -Force -ErrorAction SilentlyContinue
+
+    try {
+      Repair-VecteezyPackage $forVectPhoto (Join-Path $forVectPhoto ((Get-Item $vectCsv).BaseName + ".csv"))
+    } catch {
+      Write-Host "  [!] Sanitasi Vecteezy-photo gagal, lanjut." -ForegroundColor Yellow
+    }
+
     $nA = @(Get-ChildItem -LiteralPath $forAdobe -File -Filter "*.jpg").Count
     $nD = @(Get-ChildItem -LiteralPath $forDream -File -Filter "*.jpg").Count
-    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}." -f $nA, $nD) -ForegroundColor Green
-    Add-Stage 6 "Embed" "OK" "Adobe=$nA, Dreamstime=$nD"
+    $nV = @(Get-ChildItem -LiteralPath $forVectPhoto -File -Filter "*.jpg").Count
+    $nP = @(Get-ChildItem -LiteralPath $forPixPhoto -File -Filter "*.jpg").Count
+    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}, Vecteezy={2}, Pixabay={3}." -f $nA, $nD, $nV, $nP) -ForegroundColor Green
+    Add-Stage 6 "Embed" "OK" "Adobe=$nA, Dreamstime=$nD, Vecteezy=$nV, Pixabay=$nP"
+
+    $vpPkgs = @{
+      "Vecteezy Photo" = @{ Dir = $forVectPhoto; Csv = (Join-Path $forVectPhoto ((Get-Item $vectCsv).BaseName + ".csv")); Kind = "photo" }
+      "Pixabay Photo"  = @{ Dir = $forPixPhoto;  Csv = (Join-Path $forPixPhoto ((Get-Item $pixCsv).BaseName + ".csv"));  Kind = "photo" }
+    }
+    try {
+      $w = Test-UploadReadiness $stock $vpPkgs
+      Write-Host ("  Validasi: {0} WARN -> {1}" -f $w, (Join-Path $stock "validation_vecteezy_pixabay.txt")) -ForegroundColor Gray
+    } catch {
+      Write-Host "  [!] Validasi gagal (non-fatal), lanjut." -ForegroundColor Yellow
+    }
     } else {
     # ---------- TAHAP 3V: metadata vektor (dari JPG kecil, resume-aware) ----------
     # Bila direktori sudah menyelesaikan jalur JPG, metadata.csv + 2 CSV embed
@@ -687,6 +1107,8 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $batch = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
     $adobeCsv = Join-Path $metaDir ($batch + "_metadata_adobe.csv")
     $dreamCsv = Join-Path $metaDir ($batch + "_metadata_dreamstime.csv")
+    $vectCsv = Join-Path $metaDir ($batch + "_metadata_vecteezy.csv")
+    $pixCsv = Join-Path $metaDir ($batch + "_metadata_pixabay.csv")
     $genCsv = Join-Path $rawDir "metadata.csv"
     $haveSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg" -ErrorAction SilentlyContinue | ForEach-Object { $_.BaseName })
     $reuseFull = ((-not $Force) -and
@@ -695,12 +1117,18 @@ function Process-Dir($DirInput, $Idx, $Total) {
       (Test-EmbedCsvIdentity $adobeCsv $Copyright $Creator) -and
       (Test-EmbedCsvIdentity $dreamCsv $Copyright $Creator) -and
       (Test-EmbedCsvHasColumn $adobeCsv "Category") -and
-      (Test-EmbedCsvHasColumn $adobeCsv "Filename"))
+      (Test-EmbedCsvHasColumn $adobeCsv "Filename") -and
+      (Test-EmbedCsvComplete $vectCsv $haveSmall) -and
+      (Test-EmbedCsvComplete $pixCsv $haveSmall) -and
+      (Test-EmbedCsvIdentity $vectCsv $Copyright $Creator) -and
+      (Test-EmbedCsvIdentity $pixCsv $Copyright $Creator) -and
+      (Test-EmbedCsvHasColumn $vectCsv "License") -and
+      (Test-EmbedCsvHasColumn $pixCsv "Filename"))
     if ($reuseFull) {
       $nReuse = @(Import-Csv -LiteralPath $adobeCsv -Encoding UTF8).Count
       Write-Host ("  Metadata sudah lengkap ({0} baris), reuse tanpa API -> {1}" -f $nReuse, $metaDir) -ForegroundColor Green
       Add-Stage 3 "Metadata" "SKIP" "$nReuse baris reuse (jalur JPG selesai)"
-      $m = [pscustomobject]@{ OK = $nReuse; Failed = 0; FilteredOut = 0 }
+      $m = [pscustomobject]@{ OK = $nReuse; Failed = 0; FilteredOut = 0; Vecteezy = $nReuse; Pixabay = $nReuse }
     } else {
       $genComplete = ((-not $Force) -and (Test-GenCsvComplete $genCsv $haveSmall))
       if ($genComplete) {
@@ -713,8 +1141,8 @@ function Process-Dir($DirInput, $Idx, $Total) {
         if ($LASTEXITCODE -ne 0) { throw "Generate metadata gagal (exit $LASTEXITCODE) - lihat $rawDir\processing.log." }
         if (-not (Test-Path -LiteralPath $genCsv)) { throw "metadata.csv tidak ditemukan di $rawDir." }
       }
-      $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $Copyright $Creator $haveSmall
-      Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati) -> {3}" -f $m.OK, $m.Failed, $m.FilteredOut, $metaDir) -ForegroundColor Green
+      $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $vectCsv $pixCsv $Copyright $Creator $haveSmall
+      Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati), Vecteezy={3}, Pixabay={4} -> {5}" -f $m.OK, $m.Failed, $m.FilteredOut, $m.Vecteezy, $m.Pixabay, $metaDir) -ForegroundColor Green
       Add-Stage 3 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
       if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
     }
@@ -823,10 +1251,39 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $vemb = @{ CsvPath = $dreamCsv; JpgDir = $prevDir; VecDir = $vecSrc; OutDir = $forDream; VecKind = $vecKind }
     $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
     if ($code -ne 0) { Write-Host "  [!] Embed Dreamstime sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    $vemb = @{ CsvPath = $pixCsv; JpgDir = $prevDir; VecDir = $svgDir; OutDir = $forPixSvg; VecKind = "svg" }
+    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
+    if ($code -ne 0) { Write-Host "  [!] Embed Pixabay-SVG sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    if ($vecKind -eq "eps") {
+      $vemb = @{ CsvPath = $vectCsv; JpgDir = $prevDir; VecDir = $epsDir; OutDir = $forVectEps; VecKind = "eps" }
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
+      if ($code -ne 0) { Write-Host "  [!] Embed Vecteezy-EPS sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+      try {
+        Repair-VecteezyPackage $forVectEps (Join-Path $forVectEps ((Get-Item $vectCsv).BaseName + ".csv"))
+      } catch {
+        Write-Host "  [!] Sanitasi Vecteezy-EPS gagal, lanjut." -ForegroundColor Yellow
+      }
+    } else {
+      Write-Host "  Vecteezy vector skip (butuh EPS; jalankan Target=EPS)." -ForegroundColor Gray
+    }
     $nA = @(Get-ChildItem -LiteralPath $forAdobe -File -Filter $vecFilter).Count
     $nD = @(Get-ChildItem -LiteralPath $forDream -File -Filter $vecFilter).Count
-    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1} (pasangan JPG+{2})." -f $nA, $nD, $vecKind.ToUpper()) -ForegroundColor Green
-    Add-Stage 7 "Embed vektor" "OK" "Adobe=$nA, Dreamstime=$nD"
+    $nVV = @(Get-ChildItem -LiteralPath $forVectEps -File -Filter "*.eps").Count
+    $nPV = @(Get-ChildItem -LiteralPath $forPixSvg -File -Filter "*.svg").Count
+    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}, Vecteezy-EPS={2}, Pixabay-SVG={3} (pasangan JPG+vektor)." -f $nA, $nD, $nVV, $nPV) -ForegroundColor Green
+    Add-Stage 7 "Embed vektor" "OK" "Adobe=$nA, Dreamstime=$nD, VectEPS=$nVV, PixSVG=$nPV"
+
+    $vpPkgs = @{}
+    if ($vecKind -eq "eps") {
+      $vpPkgs["Vecteezy EPS"] = @{ Dir = $forVectEps; Csv = (Join-Path $forVectEps ((Get-Item $vectCsv).BaseName + ".csv")); Kind = "eps"; PreviewDir = $prevDir }
+    }
+    $vpPkgs["Pixabay SVG"] = @{ Dir = $forPixSvg; Csv = (Join-Path $forPixSvg ((Get-Item $pixCsv).BaseName + ".csv")); Kind = "svg"; PreviewDir = $prevDir }
+    try {
+      $w = Test-UploadReadiness $stock $vpPkgs
+      Write-Host ("  Validasi: {0} WARN -> {1}" -f $w, (Join-Path $stock "validation_vecteezy_pixabay.txt")) -ForegroundColor Gray
+    } catch {
+      Write-Host "  [!] Validasi gagal (non-fatal), lanjut." -ForegroundColor Yellow
+    }
     }
 
   } catch {
@@ -860,6 +1317,16 @@ function Process-Dir($DirInput, $Idx, $Total) {
     Write-Host ("   Total waktu : {0}" -f $script:swTotal.Elapsed.ToString("hh\:mm\:ss"))
     Write-Host ("   Upload Adobe: {0}" -f $forAdobe)
     Write-Host ("   Upload Dream: {0}" -f $forDream)
+    if ($Target -eq "JPG") {
+      Write-Host ("   Upload Vecteezy: {0}" -f $forVectPhoto)
+      Write-Host ("   Upload Pixabay : {0}" -f $forPixPhoto)
+    } elseif ($Target -eq "SVG") {
+      Write-Host "   Upload Vecteezy: (n/a - butuh Target=EPS)"
+      Write-Host ("   Upload Pixabay : {0}" -f $forPixSvg)
+    } else {
+      Write-Host ("   Upload Vecteezy: {0}" -f $forVectEps)
+      Write-Host ("   Upload Pixabay : {0}" -f $forPixSvg)
+    }
     Write-Host ("   Log         : {0}" -f (Join-Path $stock "orchestrator.log"))
     Write-Host "  +==========================================+" -ForegroundColor Yellow
     try { Stop-Transcript | Out-Null } catch { }
@@ -867,10 +1334,16 @@ function Process-Dir($DirInput, $Idx, $Total) {
   $hasFatal = ($script:stages | Where-Object { $_.Status -notin @("OK", "SKIP", "PARTIAL") }).Count -gt 0
   $hasPartial = ($script:stages | Where-Object { $_.Status -eq "PARTIAL" }).Count -gt 0
   $st = if ($hasFatal) { "GAGAL" } elseif ($hasPartial) { "PARTIAL" } else { "OK" }
+  $vectOut = if ($Target -eq "JPG") { $forVectPhoto } elseif ($Target -eq "EPS") { $forVectEps } else { "-" }
+  $pixOut = if ($Target -eq "JPG") { $forPixPhoto } else { $forPixSvg }
   return [pscustomobject]@{
-    Dir = $SourceDir; Status = $st
-    Adobe = $forAdobe; Dream = $forDream
-    Waktu = $script:swTotal.Elapsed.ToString("hh\:mm\:ss")
+    Dir      = $SourceDir
+    Status   = $st
+    Adobe    = $forAdobe
+    Dream    = $forDream
+    Vecteezy = $vectOut
+    Pixabay  = $pixOut
+    Waktu    = $script:swTotal.Elapsed.ToString("hh\:mm\:ss")
   }
 }
 
@@ -917,7 +1390,7 @@ function Main {
   for ($d = 0; $d -lt $dirList.Count; $d++) {
     if (-not (Test-Path -LiteralPath $dirList[$d] -PathType Container)) {
       Write-Host ("  [X] Folder tidak ada, dilewati: {0}" -f $dirList[$d]) -ForegroundColor Red
-      $results += [pscustomobject]@{ Dir = $dirList[$d]; Status = "GAGAL"; Adobe = "-"; Dream = "-"; Waktu = "-" }
+      $results += [pscustomobject]@{ Dir = $dirList[$d]; Status = "GAGAL"; Adobe = "-"; Dream = "-"; Vecteezy = "-"; Pixabay = "-"; Waktu = "-" }
       continue
     }
     $results += Process-Dir $dirList[$d] ($d + 1) $dirList.Count
