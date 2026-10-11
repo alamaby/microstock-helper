@@ -38,12 +38,12 @@ $SpinFrames = @('|', '/', '-', '\')
 
 function Show-Banner($ScaleLabel) {
   Write-Host ""
-  Write-Host "  __  __ ___ ____ ____   ___  ____ _____ ___   ____ _  __" -ForegroundColor Cyan
-  Write-Host " |  \/  |_ _/ ___|  _ \ / _ \/ ___|_   _/ _ \ / ___| |/ /" -ForegroundColor Cyan
-  Write-Host " | |\/| || || |   | |_) | | | \___ \ | || | | | |   | ' / " -ForegroundColor Cyan
-  Write-Host " | |  | || || |___|  _ <| |_| |___) || || |_| | |___| . \ " -ForegroundColor Cyan
-  Write-Host " |_|  |_|___\____|_| \_\\___/|____/ |_| \___/ \____|_|\_\" -ForegroundColor Cyan
-  Write-Host ("              U P S C A L E R   {0} X  (Upscayl CLI)" -f $ScaleLabel) -ForegroundColor Yellow
+  Write-Host "   _   _ ____  ____   ____    _    _     _____" -ForegroundColor Cyan
+  Write-Host "  | | | |  _ \/ ___| / ___|  / \  | |   | ____|" -ForegroundColor Cyan
+  Write-Host "  | | | | |_) \___ \| |     / _ \ | |   |  _|" -ForegroundColor Cyan
+  Write-Host "  | |_| |  __/ ___) | |___ / ___ \| |___| |___" -ForegroundColor Cyan
+  Write-Host "   \___/|_|   |____/ \____/_/   \_\_____|_____|" -ForegroundColor Cyan
+  Write-Host ("              UPSCALE {0}X image upscaler (Upscayl CLI)" -f $ScaleLabel) -ForegroundColor Yellow
   Write-Host ""
 }
 
