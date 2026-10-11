@@ -94,13 +94,13 @@ Upscale semua image (`png/jpg/webp`) dalam satu folder memakai model `upscayl-st
 ```powershell
 powershell -ExecutionPolicy Bypass -File Upscale.ps1
 .\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Scale 5
-.\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Force
+.\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Scale 5 -Force
 ```
 
 | Param | Keterangan |
 |---|---|
 | `-InputDir` / `-OutputDir` | Folder sumber / hasil (output dibuat otomatis) |
-| `-Scale` | 2–5, default `2` (4–5 terverifikasi; model selalu `-z 4`) |
+| `-Scale` | 2–5; wajib diisi eksplisit bila non-interaktif (tanpa `-Scale` hanya bertanya interaktif, Enter = `2`); 4–5 terverifikasi; model selalu `-z 4` |
 | `-Model` | Nama model Upscayl (default `upscayl-standard-4x`) |
 | `-Force` | Lanjut walau folder output sudah berisi file |
 

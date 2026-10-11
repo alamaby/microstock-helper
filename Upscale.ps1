@@ -3,7 +3,8 @@
   Upscale semua image dalam satu folder memakai Upscayl CLI (model standard).
 
 .DESCRIPTION
-  Meminta folder input (source), folder output, dan skala (default 2x),
+  Meminta folder input (source), folder output, dan skala (skala wajib
+  eksplisit bila non-interaktif; jawaban kosong saat ditanya = 2x),
   lalu memproses semua *.png / *.jpg / *.jpeg / *.webp dengan:
     upscayl-standard-4x -z 4 -s <scale>
   Melewati file yang sudah ada di folder output. Folder output dibuat
@@ -17,7 +18,7 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File Upscale.ps1
   .\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Scale 5
-  .\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Force
+  .\Upscale.ps1 -InputDir "D:\src" -OutputDir "D:\upscaled" -Scale 5 -Force
 #>
 param(
   [string]$InputDir = "",
