@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Orkestrator microstock: dari image hasil generate AI sampai siap upload
-  Adobe Stock + Dreamstime (jalur JPG/SVG/EPS).
+  Adobe Stock + Dreamstime + Vecteezy + Pixabay (jalur JPG/SVG/EPS).
 
 .DESCRIPTION
   Tahapan (jalur JPG):
@@ -12,8 +12,9 @@
     4. Final JPG  : PNG 5x -> JPG q:v 1 ke _stock/04_final_jpg.
     5. Metadata   : SELALU via inference API dari JPG KECIL (hemat),
                   backend lokal dinonaktifkan (terlalu lambat).
-                  Hasil jadi 2 CSV Adobe+Dreamstime.
-    6. Embed      : metadata -> for_adobe/ + for_dreamstime/ (file upload).
+                  Hasil jadi 4 CSV Adobe+Dreamstime+Vecteezy+Pixabay.
+    6. Embed      : metadata -> for_adobe/ + for_dreamstime/ +
+                  for_vecteezy_photo/ + for_pixabay_photo/ (file upload).
 
   Tahapan (jalur SVG / EPS - vektor dari raster, resume-aware):
     0. Preflight  : cek ffmpeg, ExifTool, vtracer, Inkscape, script
@@ -21,7 +22,7 @@
     1. Rename     : sama seperti JPG.
     2. Convert    : sama seperti JPG (JPG kecil = bahan trace + inference).
                   SKIP bila _stock/02_jpg_small sudah lengkap (mis. habis jalur JPG).
-    3. Metadata   : reuse 2 CSV embed bila sudah lengkap dari run JPG
+    3. Metadata   : reuse 4 CSV embed bila sudah lengkap dari run JPG
                   (tanpa API); rebuild dari metadata.csv mentah bila
                   Copyright/Creator berubah; generate API hanya bila kurang.
     4. Trace      : JPG kecil -> SVG ke _stock/05_svg (via vtracer,

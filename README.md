@@ -108,7 +108,7 @@ Menangani batas MAX_PATH 260 karakter milik `upscayl-bin.exe` dengan memproses v
 
 ## 6. Orchestrate-Stock — orkestrator AI image sampai siap upload
 
-Satu pintu untuk seluruh alur: rename `001_...` (in-place) → convert JPG kecil → (cabang target) → generate metadata API (dari JPG kecil) → embed ke `for_adobe/` + `for_dreamstime/`. Struktur kerja `_stock/` dibuat di dalam folder input; file sumber asli tidak diduplikasi keluar.
+Satu pintu untuk seluruh alur: rename `001_...` (in-place) → convert JPG kecil → (cabang target) → generate metadata API (dari JPG kecil) → embed ke `for_adobe/` + `for_dreamstime/` + `for_vecteezy_photo/` + `for_pixabay_photo/`. Struktur kerja `_stock/` dibuat di dalam folder input; file sumber asli tidak diduplikasi keluar.
 
 ```powershell
 .\Orchestrate-Stock.ps1
@@ -123,18 +123,18 @@ Satu pintu untuk seluruh alur: rename `001_...` (in-place) → convert JPG kecil
 
 | Param | Keterangan |
 |---|---|
-| `-Target` | `JPG` (default, via menu panah Up/Down + Enter), `SVG`, atau `EPS` |
-| `-SourceDir` | Satu atau banyak direktori (`"D:\b1","D:\b2"`); interaktif boleh koma |
+| `-Target` | `JPG`, `SVG`, atau `EPS`. Tanpa `-Target`: interaktif via menu panah (default `JPG`), non-interaktif otomatis `JPG` |
+| `-SourceDir` | Satu atau banyak direktori (`"D:\b1","D:\b2"`); interaktif boleh koma; wajib diisi bila non-interaktif |
 | `-Scale` | Skala upscale JPG 2–5, default `5` (jalur JPG saja) |
 | `-PreviewWidth` | Lebar render preview JPG vektor 1000–15000px, default `6000` (jalur SVG/EPS) |
 | `-Copyright` / `-Creator` | Default `alamaby` |
-| `-Force` | Teruskan ke semua tahap (wajib untuk batch agar tak ada prompt) |
+| `-Force` | Ulangi paksa semua tahap (teruskan ke child script; menonaktifkan skip/reuse resume). Prompt dihindari dengan mengikat semua param (contoh hands-free), bukan dengan `-Force`; jangan pakai untuk resume |
 
 Cabang target:
 
-- `JPG`: convert JPG kecil → upscale 5x (Upscayl) → JPG final → embed triple-sync.
-- `SVG`: trace JPG kecil → SVG (`Trace-Svg`, vtracer color-cluster/cutout/spline) → render preview JPG besar dari SVG (Inkscape + ffmpeg) → embed (`Embed-VectorMetadata`): JPG triple-sync + SVG injeksi `<title>`/`<desc>`/RDF. Paket `for_adobe_svg/` + `for_dreamstime_svg/` berisi pasangan `.jpg`+`.svg` basename sama + salinan CSV agensi.
-- `EPS`: sama seperti SVG, ditambah SVG→EPS (Inkscape CLI). Paket `for_adobe_eps/` + `for_dreamstime_eps/` berisi pasangan `.jpg`+`.eps` saja (SVG intermediate tidak dikirim). EPS di-embed XMP-dc via ExifTool.
+- `JPG`: convert JPG kecil → upscale 5x (Upscayl) → JPG final → embed 4 paket (`for_adobe/`, `for_dreamstime/`, `for_vecteezy_photo/`, `for_pixabay_photo/`; JPG triple-sync + salinan CSV Vecteezy/Pixabay).
+- `SVG`: trace JPG kecil → SVG (`Trace-Svg`, vtracer color-cluster/cutout/spline) → render preview JPG besar dari SVG (Inkscape + ffmpeg) → embed (`Embed-VectorMetadata`): JPG triple-sync + SVG injeksi `<title>`/`<desc>`/RDF. Paket `for_adobe_svg/` + `for_dreamstime_svg/` + `for_pixabay_svg/` berisi pasangan `.jpg`+`.svg` basename sama + salinan CSV agensi (Vecteezy vektor hanya di jalur EPS).
+- `EPS`: sama seperti SVG, ditambah SVG→EPS (Inkscape CLI). Paket `for_adobe_eps/` + `for_dreamstime_eps/` berisi pasangan `.jpg`+`.eps` saja (SVG intermediate tidak dikirim) + `for_vecteezy_eps/` + `for_pixabay_svg/` (ikut terisi di jalur EPS). EPS di-embed XMP-dc via ExifTool.
 
 Catatan: ExifTool tidak mendukung tulis SVG, jadi metadata SVG adalah injeksi XML best-effort (CSV pendamping tetap sumber kebenaran). Uji upload 1 file per agensi dulu sebelum batch besar.
 
@@ -147,9 +147,9 @@ Lanjut dari jalur JPG (resume otomatis): bila satu direktori sudah selesai `-Tar
 .\Orchestrate-Stock.ps1 -SourceDir "C:\Side\Microstock\witch_halloween\generated-1" -Target EPS -Scale 5 -Copyright "alamaby" -Creator "alamaby"
 ```
 
-Penting: **jangan pakai `-Force` untuk resume** — `-Force` artinya ulangi semua dari awal (convert ulang, generate ulang). Tanpa `-Force`: banner `Resume` menampilkan status JPG/SVG/EPS; convert JPG kecil di-skip bila `02_jpg_small` lengkap; metadata di-reuse tanpa API bila 2 CSV embed sudah menutupi semua JPG kecil (rebuild tanpa API bila `-Copyright`/`-Creator` berubah; generate API hanya bila ada file baru yang belum termetadata); trace/preview/EPS hanya memproses file yang belum ada (file korup/setengah-jadi otomatis diproses ulang). Paket vektor ditulis ke folder terpisah (`for_adobe_svg/`, `for_dreamstime_svg/`, `for_adobe_eps/`, `for_dreamstime_eps/`) sehingga upload JPG (`for_adobe/`, `for_dreamstime/`) tidak tertimpa.
+Penting: **jangan pakai `-Force` untuk resume** — `-Force` artinya ulangi semua dari awal (convert ulang, generate ulang). Tanpa `-Force`: banner `Resume` menampilkan status JPG/SVG/EPS; convert JPG kecil di-skip bila `02_jpg_small` lengkap; metadata di-reuse tanpa API bila 4 CSV embed (Adobe/Dreamstime/Vecteezy/Pixabay) sudah menutupi semua JPG kecil (rebuild tanpa API bila `-Copyright`/`-Creator` berubah; generate API hanya bila ada file baru yang belum termetadata); trace/preview/EPS hanya memproses file yang belum ada (file korup/setengah-jadi otomatis diproses ulang). Paket vektor ditulis ke folder terpisah (`for_adobe_svg/`, `for_dreamstime_svg/`, `for_adobe_eps/`, `for_dreamstime_eps/`) sehingga upload JPG (`for_adobe/`, `for_dreamstime/`) tidak tertimpa.
 
-Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan. Run ulang aman: file selesai di-skip, file korup/setengah-jadi otomatis diproses ulang, sisa interupsi rename (`.renametmp` yatim) dipulihkan otomatis.
+Antrean >1 direktori jalan berurutan dengan config default + rekap gabungan OK/PARTIAL/GAGAL. Metadata selalu via inference API (`MICROSTOCK_API_KEY` wajib di `.env` generator); backend lokal dinonaktifkan. Run ulang aman: file selesai di-skip, file korup/setengah-jadi otomatis diproses ulang, sisa interupsi rename (`.renametmp` yatim) dipulihkan otomatis.
 
 ## Alur kerja umum
 
