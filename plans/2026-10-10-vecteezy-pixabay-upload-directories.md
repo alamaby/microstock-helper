@@ -613,6 +613,18 @@ Out of scope (dilarang diubah, lihat juga daftar global di S1–S8):
   (6) Laporan validasi kesiapan upload `validation_vecteezy_pixabay.txt` via `Test-UploadReadiness` (warn-only).
   (7) Summary upload path Vecteezy & Pixabay + return object properties.
   (8) Verifikasi parsial dan ujung-ke-ujung (parser 0 error, regresi CSV, sanitasi idempoten, fixture EPS end-to-end exit 0).
+- 2026-10-11 — Review implementasi vs plan (audit independen + fixture TEMP, tanpa ubah repo):
+  S1–S4/S7 sesuai spec (regresi Adobe/Dream byte-identik; e2e SVG exit 0 + rerun SKIP/reuse exit 0).
+  Temuan dalam scope diperbaiki di `Orchestrate-Stock.ps1` saja:
+  (a) Rerun-drift `Repair-VecteezyPackage` (MEDIUM — duplikat `_2` tumbuh tiap rerun bila sanitasi aktif):
+  hapus keluaran basi berbasis norma CSV + cek CSV di awal + CSV kosong ditolak;
+  (b) V4 sRGB 2 invocasi exiftool per file (LOW perf) → 1 invocasi, semantik WARN sama;
+  (c) yatim `*.sanitmp` dibersihkan di awal Repair (LOW).
+  Observasi diterima tanpa perbaikan (LOW kosmetik): embed Pixabay mencetak warning
+  `Title NNch > 70 (Adobe ideal)` untuk judul 71–100ch — `Embed-JpgMetadata.ps1`
+  di luar scope plan ini, embed tetap exit 0.
+  Verifikasi pasca-perbaikan: parser 0 error, S1/S5/S6 unit OK, regresi identik,
+  drift-test konvergen 3 run, e2e SVG + rerun exit 0.
 
 ## Notes
 

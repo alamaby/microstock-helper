@@ -148,8 +148,40 @@ function Get-SafeUploadName([string]$basename) {
 function Repair-VecteezyPackage([string]$PkgDir, [string]$CsvFileName) {
   try {
     if (-not (Test-Path -LiteralPath $PkgDir -PathType Container)) { return $false }
+    # Bersihkan sisa interupsi sebelumnya (*.sanitmp yatim dari rename 2-tahap
+    # yang terpotong di tengah); tanpa ini yatim ikut ter-enumerasi sebagai aset.
+    Get-ChildItem -LiteralPath $PkgDir -File -Filter "*.sanitmp" -ErrorAction SilentlyContinue |
+      Remove-Item -Force -ErrorAction SilentlyContinue
     $csvLeaf = Split-Path $CsvFileName -Leaf
-    $files = @(Get-ChildItem -LiteralPath $PkgDir -File | Where-Object { $_.Name -ine $csvLeaf -and $_.Extension -ine ".csv" } | Sort-Object Name)
+    if (-not (Test-Path -LiteralPath $CsvFileName -PathType Leaf)) {
+      Write-Host ("  [!] CSV paket tidak ditemukan: {0}" -f $CsvFileName) -ForegroundColor Yellow
+      return $false
+    }
+    $csvRows = @(Import-Csv -LiteralPath $CsvFileName -Encoding UTF8)
+    if ($csvRows.Count -eq 0) {
+      Write-Host ("  [!] CSV paket kosong: {0}" -f $CsvFileName) -ForegroundColor Yellow
+      return $false
+    }
+    $files = @(Get-ChildItem -LiteralPath $PkgDir -File | Where-Object { $_.Name -ine $csvLeaf -and $_.Extension -ine ".csv" -and $_.Extension -ine ".sanitmp" } | Sort-Object Name)
+    # Hapus keluaran basi dari run sebelumnya (basename tak tercantum di CSV):
+    # tanpa ini rerun menumpuk duplikat _2/_3 dari gabungan (copy fresh + output lama).
+    $csvNorms = @{}
+    foreach ($cr in $csvRows) {
+      $sv = Get-CsvSourceFile $cr
+      if ($sv) { $csvNorms[(Get-NormBase $sv)] = $true }
+    }
+    $stale = @($files | Where-Object {
+      $ext0 = [IO.Path]::GetExtension($_.Name)
+      $b0 = $_.Name.Substring(0, $_.Name.Length - $ext0.Length)
+      -not $csvNorms.ContainsKey((Get-NormBase $b0))
+    })
+    foreach ($s in $stale) {
+      Write-Host ("  Bersihkan basi: {0}" -f $s.Name) -ForegroundColor Yellow
+      Remove-Item -LiteralPath $s.FullName -Force -ErrorAction SilentlyContinue
+    }
+    if ($stale.Count -gt 0) {
+      $files = @(Get-ChildItem -LiteralPath $PkgDir -File | Where-Object { $_.Name -ine $csvLeaf -and $_.Extension -ine ".csv" -and $_.Extension -ine ".sanitmp" } | Sort-Object Name)
+    }
     if ($files.Count -eq 0) { return $true }
 
     # Kumpulkan distinct old basenames (sort deterministik)
@@ -200,23 +232,17 @@ function Repair-VecteezyPackage([string]$PkgDir, [string]$CsvFileName) {
       }
     }
 
-    # Rewrite salinan CSV di dalam $PkgDir
-    if (Test-Path -LiteralPath $CsvFileName -PathType Leaf) {
-      $rows = @(Import-Csv -LiteralPath $CsvFileName -Encoding UTF8)
-      foreach ($r in $rows) {
-        $srcVal = Get-CsvSourceFile $r
-        $norm = Get-NormBase $srcVal
-        if ($baseMapNorm.ContainsKey($norm)) {
-          $r.Filename = $baseMapNorm[$norm]
-        } else {
-          $r.Filename = Get-SafeUploadName $norm
-        }
+    # Rewrite salinan CSV di dalam $PkgDir (pakai $csvRows yang sudah dimuat di atas)
+    foreach ($r in $csvRows) {
+      $srcVal = Get-CsvSourceFile $r
+      $norm = Get-NormBase $srcVal
+      if ($baseMapNorm.ContainsKey($norm)) {
+        $r.Filename = $baseMapNorm[$norm]
+      } else {
+        $r.Filename = Get-SafeUploadName $norm
       }
-      $rows | Export-Csv -LiteralPath $CsvFileName -Encoding UTF8 -NoTypeInformation
-    } else {
-      Write-Host ("  [!] CSV paket tidak ditemukan: {0}" -f $CsvFileName) -ForegroundColor Yellow
-      return $false
     }
+    $csvRows | Export-Csv -LiteralPath $CsvFileName -Encoding UTF8 -NoTypeInformation
     return $true
   } catch {
     Write-Host ("  [!] Sanitasi Vecteezy gagal ({0}): {1}" -f $PkgDir, $_.Exception.Message) -ForegroundColor Yellow
@@ -683,11 +709,12 @@ function Test-UploadReadiness([string]$StockDir, [hashtable]$Packages) {
               $p
             }
             if ($targetJpg -and (Test-Path -LiteralPath $targetJpg -PathType Leaf)) {
-              $cs = (& $BinExif -s -s -s -ColorSpace "$targetJpg" 2>$null) -join " "
-              $pd = (& $BinExif -s -s -s -ProfileDescription "$targetJpg" 2>$null) -join " "
-              $comb = "$cs $pd"
+              # Satu invocasi untuk kedua tag (hemat 1 proses exiftool per file);
+              # semantik sama: WARN bila tak ada token sRGB di gabungan output.
+              $profOut = @((& $BinExif -s -s -s -ColorSpace -ProfileDescription "$targetJpg" 2>$null) | ForEach-Object { "$_" })
+              $comb = ($profOut -join " ")
               if ($comb -notmatch "sRGB") {
-                $warns += ("{0}: sRGB tak terkonfirmasi (ColorSpace='{1}', Profile='{2}')." -f (Split-Path $targetJpg -Leaf), $cs.Trim(), $pd.Trim())
+                $warns += ("{0}: sRGB tak terkonfirmasi (profil: '{1}')." -f (Split-Path $targetJpg -Leaf), $comb.Trim())
               }
             }
           }
