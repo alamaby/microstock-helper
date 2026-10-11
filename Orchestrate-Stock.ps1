@@ -1072,18 +1072,32 @@ function Process-Dir($DirInput, $Idx, $Total) {
     $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)"
     Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
     cmd /c $genCmd
-    if ($LASTEXITCODE -ne 0) { throw "Generate metadata gagal (exit $LASTEXITCODE) - lihat $rawDir\processing.log." }
+    $genExit = $LASTEXITCODE
     $genCsv = Join-Path $rawDir "metadata.csv"
-    if (-not (Test-Path -LiteralPath $genCsv)) { throw "metadata.csv tidak ditemukan di $rawDir." }
+    $genCsvExists = Test-Path -LiteralPath $genCsv -PathType Leaf
+    $genOkRows = 0
+    if ($genCsvExists) {
+      try { $genOkRows = @(Import-Csv -LiteralPath $genCsv -Encoding UTF8 -ErrorAction Stop | Where-Object { $_.status -in @("success","skipped") }).Count } catch { $genOkRows = 0 }
+    }
+    if (($genExit -ne 0) -and (($genExit -ne 1) -or (-not $genCsvExists) -or ($genOkRows -eq 0))) { throw "Generate metadata gagal (exit $genExit) - lihat $rawDir\processing.log." }
+    if (-not $genCsvExists) { throw "metadata.csv tidak ditemukan di $rawDir." }
+    if (($genExit -eq 1) -and ($genOkRows -gt 0)) { Write-Host ("  [!] Generate metadata partial (exit 1): {0} sukses, lanjut dengan file sukses." -f $genOkRows) -ForegroundColor Yellow }
     $batch = (Get-Item -LiteralPath $SourceDir).Name -replace "[^\w\-]+", "_"
     $adobeCsv = Join-Path $metaDir ($batch + "_metadata_adobe.csv")
     $dreamCsv = Join-Path $metaDir ($batch + "_metadata_dreamstime.csv")
     $vectCsv = Join-Path $metaDir ($batch + "_metadata_vecteezy.csv")
     $pixCsv = Join-Path $metaDir ($batch + "_metadata_pixabay.csv")
-    $haveFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg" -ErrorAction SilentlyContinue | % { $_.BaseName })
+    $haveFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg" -ErrorAction SilentlyContinue | ForEach-Object { $_.BaseName })
     $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $vectCsv $pixCsv $Copyright $Creator $haveFinal
     Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati), Vecteezy={3}, Pixabay={4} -> {5}" -f $m.OK, $m.Failed, $m.FilteredOut, $m.Vecteezy, $m.Pixabay, $metaDir) -ForegroundColor Green
-    Add-Stage 5 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
+    $failedMeta = Join-Path $stock "failed_05_metadata.txt"
+    Remove-Item -LiteralPath $failedMeta -Force -ErrorAction SilentlyContinue
+    try {
+      $failedNames = @(Import-Csv -LiteralPath $genCsv -Encoding UTF8 -ErrorAction Stop | Where-Object { $_.status -notin @("success","skipped") } | ForEach-Object { "$($_.filename)" } | Where-Object { $_ } | Sort-Object -Unique)
+      if ($failedNames.Count -gt 0) { Write-FailedList $failedMeta $failedNames }
+    } catch { Write-Host ("  [!] Gagal menghitung daftar metadata gagal: {0}" -f $_.Exception.Message) -ForegroundColor Yellow }
+    if ($genExit -eq 1) { Add-Stage 5 "Metadata" "PARTIAL" "$($m.OK) OK, $($m.Failed) gagal (exit 1, lihat failed_05_metadata.txt)" }
+    else { Add-Stage 5 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal" }
     if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
 
     # ---------- TAHAP 6: embed ----------
@@ -1165,12 +1179,26 @@ function Process-Dir($DirInput, $Idx, $Total) {
         $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)"
         Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
         cmd /c $genCmd
-        if ($LASTEXITCODE -ne 0) { throw "Generate metadata gagal (exit $LASTEXITCODE) - lihat $rawDir\processing.log." }
-        if (-not (Test-Path -LiteralPath $genCsv)) { throw "metadata.csv tidak ditemukan di $rawDir." }
+        $genExit = $LASTEXITCODE
+        $genCsvExists = Test-Path -LiteralPath $genCsv -PathType Leaf
+        $genOkRows = 0
+        if ($genCsvExists) {
+          try { $genOkRows = @(Import-Csv -LiteralPath $genCsv -Encoding UTF8 -ErrorAction Stop | Where-Object { $_.status -in @("success","skipped") }).Count } catch { $genOkRows = 0 }
+        }
+        if (($genExit -ne 0) -and (($genExit -ne 1) -or (-not $genCsvExists) -or ($genOkRows -eq 0))) { throw "Generate metadata gagal (exit $genExit) - lihat $rawDir\processing.log." }
+        if (-not $genCsvExists) { throw "metadata.csv tidak ditemukan di $rawDir." }
+        if (($genExit -eq 1) -and ($genOkRows -gt 0)) { Write-Host ("  [!] Generate metadata partial (exit 1): {0} sukses, lanjut dengan file sukses." -f $genOkRows) -ForegroundColor Yellow }
       }
       $m = ConvertTo-EmbedCsvs $genCsv $adobeCsv $dreamCsv $vectCsv $pixCsv $Copyright $Creator $haveSmall
       Write-Host ("  Metadata: {0} OK, {1} gagal, {2} tanpa file-output (dilewati), Vecteezy={3}, Pixabay={4} -> {5}" -f $m.OK, $m.Failed, $m.FilteredOut, $m.Vecteezy, $m.Pixabay, $metaDir) -ForegroundColor Green
-      Add-Stage 3 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal"
+      $failedMeta = Join-Path $stock "failed_03_metadata.txt"
+      Remove-Item -LiteralPath $failedMeta -Force -ErrorAction SilentlyContinue
+      try {
+        $failedNames = @(Import-Csv -LiteralPath $genCsv -Encoding UTF8 -ErrorAction Stop | Where-Object { $_.status -notin @("success","skipped") } | ForEach-Object { "$($_.filename)" } | Where-Object { $_ } | Sort-Object -Unique)
+        if ($failedNames.Count -gt 0) { Write-FailedList $failedMeta $failedNames }
+      } catch { Write-Host ("  [!] Gagal menghitung daftar metadata gagal: {0}" -f $_.Exception.Message) -ForegroundColor Yellow }
+      if ($genExit -eq 1) { Add-Stage 3 "Metadata" "PARTIAL" "$($m.OK) OK, $($m.Failed) gagal (exit 1, lihat failed_03_metadata.txt)" }
+      else { Add-Stage 3 "Metadata" "OK" "$($m.OK) OK, $($m.Failed) gagal" }
       if ($m.OK -eq 0) { throw "Tidak ada metadata sukses untuk di-embed." }
     }
 
