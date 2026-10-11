@@ -1171,6 +1171,7 @@ function Process-Dir($DirInput, $Idx, $Total) {
       Add-Stage 3 "Metadata" "SKIP" "$nReuse baris reuse (jalur JPG selesai)"
       $m = [pscustomobject]@{ OK = $nReuse; Failed = 0; FilteredOut = 0; Vecteezy = $nReuse; Pixabay = $nReuse }
     } else {
+      $genExit = 0
       $genComplete = ((-not $Force) -and (Test-GenCsvComplete $genCsv $haveSmall))
       if ($genComplete) {
         Write-Host "  metadata.csv mentah sudah lengkap, rebuild 2 CSV embed tanpa API." -ForegroundColor Yellow
