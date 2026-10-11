@@ -39,11 +39,20 @@
                   salinan CSV agensi. JPG triple-sync, EPS XMP,
                   SVG injeksi XML native (best-effort).
 
+  Opsi -Platforms (subset Adobe,Dreamstime,Vecteezy,Pixabay; default semua):
+    hanya platform terpilih yang paket upload-nya ditulis/divalidasi;
+    yang tak dipilih dibiarkan utuh (tidak dihapus). Memilih platform =
+    membuat ulang (overwrite) paket itu karena child memakai Copy-Item -Force.
+    -Force tetap hanya memaksa tahap hulu (convert/upscale/trace/metadata).
+    Vecteezy tidak didukung untuk Target=SVG (warning, bukan error).
+
 .EXAMPLE
   .\Orchestrate-Stock.ps1
   .\Orchestrate-Stock.ps1 -SourceDir "D:\batch1" -Force
   .\Orchestrate-Stock.ps1 -SourceDir "D:\batch1","D:\batch2","D:\batch3" -Force
   (antrean banyak direktori, semua config default, jalan berurutan)
+  .\Orchestrate-Stock.ps1 -Target JPG -SourceDir "D:\batch1" -Platforms Adobe,Dreamstime
+  .\Orchestrate-Stock.ps1 -Target EPS -SourceDir "D:\batch1" -Platforms Vecteezy -Force
 #>
 [CmdletBinding()]
 param(
@@ -53,6 +62,7 @@ param(
   [ValidateRange(1000, 15000)][int]$PreviewWidth = 6000,
   [string]$Copyright = "alamaby",
   [string]$Creator = "alamaby",
+  [ValidateSet("Adobe", "Dreamstime", "Vecteezy", "Pixabay")][string[]]$Platforms = @("Adobe", "Dreamstime", "Vecteezy", "Pixabay"),
   [switch]$Force
 )
 
@@ -77,6 +87,14 @@ $script:swTotal = [System.Diagnostics.Stopwatch]::StartNew()
 $script:MetadataBackend = "api"
 # Tangkap param terikat di scope skrip (di dalam fungsi $PSBoundParameters milik fungsi itu).
 $script:boundKeys = @($PSBoundParameters.Keys)
+
+function Test-PlatformSelected([string]$Name) {
+  $n = ([string]$Name).Trim().ToLower()
+  foreach ($p in @($Platforms)) {
+    if (("$p".Trim().ToLower()) -eq $n) { return $true }
+  }
+  return $false
+}
 
 function Write-Stage($n, $title) {
   Write-Host ""
@@ -870,9 +888,10 @@ function Process-Dir($DirInput, $Idx, $Total) {
     )
     foreach ($l in $logo) { Write-Host $l -ForegroundColor Cyan }
     foreach ($l in $logo) { Write-Host ("    " + $l.TrimEnd()) -ForegroundColor DarkGray }
-    Write-Host "   AI image -> siap upload Adobe + Dreamstime (Target: $Target)" -ForegroundColor Yellow
+    Write-Host ("   AI image -> siap upload ({0}) (Target: {1})" -f ($Platforms -join ", "), $Target) -ForegroundColor Yellow
     Write-Host "  Sumber : $SourceDir" -ForegroundColor Gray
     Write-Host "  Kerja  : $stock" -ForegroundColor Gray
+    Write-Host ("  Platform: {0}" -f ($Platforms -join ", ")) -ForegroundColor Gray
     if ($Target -in @("SVG", "EPS")) {
       $rsSmall = @(Get-ChildItem -LiteralPath $small -File -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
       $rsFinal = @(Get-ChildItem -LiteralPath $final -File -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
@@ -1103,40 +1122,60 @@ function Process-Dir($DirInput, $Idx, $Total) {
 
     # ---------- TAHAP 6: embed ----------
     Write-Stage 6 "Embed metadata (Adobe + Dreamstime)"
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $adobeCsv; JpgDir = $final; OutDir = $forAdobe }
-    if ($code -ne 0) { Write-Host "  [!] Embed Adobe sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $dreamCsv; JpgDir = $final; OutDir = $forDream }
-    if ($code -ne 0) { Write-Host "  [!] Embed Dreamstime sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $vectCsv; JpgDir = $final; OutDir = $forVectPhoto }
-    if ($code -ne 0) { Write-Host "  [!] Embed Vecteezy sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $pixCsv; JpgDir = $final; OutDir = $forPixPhoto }
-    if ($code -ne 0) { Write-Host "  [!] Embed Pixabay sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    $doAdobe = Test-PlatformSelected "Adobe"; $doDream = Test-PlatformSelected "Dreamstime"
+    $doVect = Test-PlatformSelected "Vecteezy"; $doPix = Test-PlatformSelected "Pixabay"
 
-    Copy-Item -LiteralPath $vectCsv -Destination (Join-Path $forVectPhoto (Split-Path $vectCsv -Leaf)) -Force -ErrorAction SilentlyContinue
-    Copy-Item -LiteralPath $pixCsv -Destination (Join-Path $forPixPhoto (Split-Path $pixCsv -Leaf)) -Force -ErrorAction SilentlyContinue
-
-    try {
-      Repair-VecteezyPackage $forVectPhoto (Join-Path $forVectPhoto ((Get-Item $vectCsv).BaseName + ".csv"))
-    } catch {
-      Write-Host "  [!] Sanitasi Vecteezy-photo gagal, lanjut." -ForegroundColor Yellow
+    if ($doAdobe) {
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $adobeCsv; JpgDir = $final; OutDir = $forAdobe }
+      if ($code -ne 0) { Write-Host "  [!] Embed Adobe sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    }
+    if ($doDream) {
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $dreamCsv; JpgDir = $final; OutDir = $forDream }
+      if ($code -ne 0) { Write-Host "  [!] Embed Dreamstime sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    }
+    if ($doVect) {
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $vectCsv; JpgDir = $final; OutDir = $forVectPhoto }
+      if ($code -ne 0) { Write-Host "  [!] Embed Vecteezy sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+      Copy-Item -LiteralPath $vectCsv -Destination (Join-Path $forVectPhoto (Split-Path $vectCsv -Leaf)) -Force -ErrorAction SilentlyContinue
+      try {
+        Repair-VecteezyPackage $forVectPhoto (Join-Path $forVectPhoto ((Get-Item $vectCsv).BaseName + ".csv"))
+      } catch {
+        Write-Host "  [!] Sanitasi Vecteezy-photo gagal, lanjut." -ForegroundColor Yellow
+      }
+    } else {
+      Write-Host "  Vecteezy-photo skip (tak dipilih)." -ForegroundColor Gray
+    }
+    if ($doPix) {
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-JpgMetadata.ps1") @{ CsvPath = $pixCsv; JpgDir = $final; OutDir = $forPixPhoto }
+      if ($code -ne 0) { Write-Host "  [!] Embed Pixabay sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+      Copy-Item -LiteralPath $pixCsv -Destination (Join-Path $forPixPhoto (Split-Path $pixCsv -Leaf)) -Force -ErrorAction SilentlyContinue
     }
 
-    $nA = @(Get-ChildItem -LiteralPath $forAdobe -File -Filter "*.jpg").Count
-    $nD = @(Get-ChildItem -LiteralPath $forDream -File -Filter "*.jpg").Count
-    $nV = @(Get-ChildItem -LiteralPath $forVectPhoto -File -Filter "*.jpg").Count
-    $nP = @(Get-ChildItem -LiteralPath $forPixPhoto -File -Filter "*.jpg").Count
-    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}, Vecteezy={2}, Pixabay={3}." -f $nA, $nD, $nV, $nP) -ForegroundColor Green
-    Add-Stage 6 "Embed" "OK" "Adobe=$nA, Dreamstime=$nD, Vecteezy=$nV, Pixabay=$nP"
+    $nA = if ($doAdobe) { @(Get-ChildItem -LiteralPath $forAdobe -File -Filter "*.jpg").Count } else { -1 }
+    $nD = if ($doDream) { @(Get-ChildItem -LiteralPath $forDream -File -Filter "*.jpg").Count } else { -1 }
+    $nV = if ($doVect) { @(Get-ChildItem -LiteralPath $forVectPhoto -File -Filter "*.jpg").Count } else { -1 }
+    $nP = if ($doPix) { @(Get-ChildItem -LiteralPath $forPixPhoto -File -Filter "*.jpg").Count } else { -1 }
+    $fA = if ($doAdobe) { "$nA" } else { "-" }; $fD = if ($doDream) { "$nD" } else { "-" }
+    $fV = if ($doVect) { "$nV" } else { "-" }; $fP = if ($doPix) { "$nP" } else { "-" }
+    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}, Vecteezy={2}, Pixabay={3}." -f $fA, $fD, $fV, $fP) -ForegroundColor Green
+    Add-Stage 6 "Embed" "OK" "Adobe=$fA, Dreamstime=$fD, Vecteezy=$fV, Pixabay=$fP"
 
-    $vpPkgs = @{
-      "Vecteezy Photo" = @{ Dir = $forVectPhoto; Csv = (Join-Path $forVectPhoto ((Get-Item $vectCsv).BaseName + ".csv")); Kind = "photo" }
-      "Pixabay Photo"  = @{ Dir = $forPixPhoto;  Csv = (Join-Path $forPixPhoto ((Get-Item $pixCsv).BaseName + ".csv"));  Kind = "photo" }
+    $vpPkgs = @{}
+    if ($doVect) {
+      $vpPkgs["Vecteezy Photo"] = @{ Dir = $forVectPhoto; Csv = (Join-Path $forVectPhoto ((Get-Item $vectCsv).BaseName + ".csv")); Kind = "photo" }
     }
-    try {
-      $w = Test-UploadReadiness $stock $vpPkgs
-      Write-Host ("  Validasi: {0} WARN -> {1}" -f $w, (Join-Path $stock "validation_vecteezy_pixabay.txt")) -ForegroundColor Gray
-    } catch {
-      Write-Host "  [!] Validasi gagal (non-fatal), lanjut." -ForegroundColor Yellow
+    if ($doPix) {
+      $vpPkgs["Pixabay Photo"] = @{ Dir = $forPixPhoto; Csv = (Join-Path $forPixPhoto ((Get-Item $pixCsv).BaseName + ".csv")); Kind = "photo" }
+    }
+    if ($vpPkgs.Count -gt 0) {
+      try {
+        $w = Test-UploadReadiness $stock $vpPkgs
+        Write-Host ("  Validasi: {0} WARN -> {1}" -f $w, (Join-Path $stock "validation_vecteezy_pixabay.txt")) -ForegroundColor Gray
+      } catch {
+        Write-Host "  [!] Validasi gagal (non-fatal), lanjut." -ForegroundColor Yellow
+      }
+    } else {
+      Write-Host "  Validasi skip (platform tak dipilih)." -ForegroundColor Gray
     }
     } else {
     # ---------- TAHAP 3V: metadata vektor (dari JPG kecil, resume-aware) ----------
@@ -1294,24 +1333,46 @@ function Process-Dir($DirInput, $Idx, $Total) {
 
     # ---------- TAHAP 7V: embed paket vektor (folder terpisah, JPG tidak ditimpa) ----------
     Write-Stage 7 "Embed metadata vektor (Adobe + Dreamstime)"
+    $doAdobe = Test-PlatformSelected "Adobe"; $doDream = Test-PlatformSelected "Dreamstime"
+    $doVect = Test-PlatformSelected "Vecteezy"; $doPix = Test-PlatformSelected "Pixabay"
+
     # Paket vektor di folder terpisah (for_adobe_svg/for_adobe_eps) agar
     # hasil jalur JPG (for_adobe/for_dreamstime) tidak tertimpa.
     # Bersihkan pasangan basi di dalam folder vektor sendiri saja.
     $staleFilter = if ($vecKind -eq "svg") { "*.eps" } else { "*.svg" }
-    foreach ($d in @($forAdobe, $forDream)) {
-      Get-ChildItem -LiteralPath $d -File -Filter $staleFilter -ErrorAction SilentlyContinue |
+    if ($doAdobe) {
+      Get-ChildItem -LiteralPath $forAdobe -File -Filter $staleFilter -ErrorAction SilentlyContinue |
         Remove-Item -Force -ErrorAction SilentlyContinue
     }
-    $vemb = @{ CsvPath = $adobeCsv; JpgDir = $prevDir; VecDir = $vecSrc; OutDir = $forAdobe; VecKind = $vecKind }
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
-    if ($code -ne 0) { Write-Host "  [!] Embed Adobe sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
-    $vemb = @{ CsvPath = $dreamCsv; JpgDir = $prevDir; VecDir = $vecSrc; OutDir = $forDream; VecKind = $vecKind }
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
-    if ($code -ne 0) { Write-Host "  [!] Embed Dreamstime sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
-    $vemb = @{ CsvPath = $pixCsv; JpgDir = $prevDir; VecDir = $svgDir; OutDir = $forPixSvg; VecKind = "svg" }
-    $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
-    if ($code -ne 0) { Write-Host "  [!] Embed Pixabay-SVG sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
-    if ($vecKind -eq "eps") {
+    if ($doDream) {
+      Get-ChildItem -LiteralPath $forDream -File -Filter $staleFilter -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($doAdobe) {
+      $vemb = @{ CsvPath = $adobeCsv; JpgDir = $prevDir; VecDir = $vecSrc; OutDir = $forAdobe; VecKind = $vecKind }
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
+      if ($code -ne 0) { Write-Host "  [!] Embed Adobe sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    } else {
+      Write-Host "  Adobe-vektor skip (tak dipilih)." -ForegroundColor Gray
+    }
+    if ($doDream) {
+      $vemb = @{ CsvPath = $dreamCsv; JpgDir = $prevDir; VecDir = $vecSrc; OutDir = $forDream; VecKind = $vecKind }
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
+      if ($code -ne 0) { Write-Host "  [!] Embed Dreamstime sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    } else {
+      Write-Host "  Dreamstime-vektor skip (tak dipilih)." -ForegroundColor Gray
+    }
+    if ($doPix) {
+      $vemb = @{ CsvPath = $pixCsv; JpgDir = $prevDir; VecDir = $svgDir; OutDir = $forPixSvg; VecKind = "svg" }
+      $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
+      if ($code -ne 0) { Write-Host "  [!] Embed Pixabay-SVG sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
+    } else {
+      Write-Host "  Pixabay-SVG skip (tak dipilih)." -ForegroundColor Gray
+    }
+    if (-not $doVect) {
+      Write-Host "  Vecteezy vector skip (tak dipilih)." -ForegroundColor Gray
+    } elseif ($vecKind -eq "eps") {
       $vemb = @{ CsvPath = $vectCsv; JpgDir = $prevDir; VecDir = $epsDir; OutDir = $forVectEps; VecKind = "eps" }
       $code = Invoke-Child (Join-Path $PSScriptRoot "Embed-VectorMetadata.ps1") $vemb
       if ($code -ne 0) { Write-Host "  [!] Embed Vecteezy-EPS sebagian gagal (exit $code), lanjut." -ForegroundColor Yellow }
@@ -1321,25 +1382,34 @@ function Process-Dir($DirInput, $Idx, $Total) {
         Write-Host "  [!] Sanitasi Vecteezy-EPS gagal, lanjut." -ForegroundColor Yellow
       }
     } else {
-      Write-Host "  Vecteezy vector skip (butuh EPS; jalankan Target=EPS)." -ForegroundColor Gray
+      Write-Host "  Vecteezy diminta tapi Target=SVG tidak mendukung vektor-Vecteezy; skip (jalankan Target=EPS)." -ForegroundColor Yellow
     }
-    $nA = @(Get-ChildItem -LiteralPath $forAdobe -File -Filter $vecFilter).Count
-    $nD = @(Get-ChildItem -LiteralPath $forDream -File -Filter $vecFilter).Count
-    $nVV = @(Get-ChildItem -LiteralPath $forVectEps -File -Filter "*.eps").Count
-    $nPV = @(Get-ChildItem -LiteralPath $forPixSvg -File -Filter "*.svg").Count
-    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}, Vecteezy-EPS={2}, Pixabay-SVG={3} (pasangan JPG+vektor)." -f $nA, $nD, $nVV, $nPV) -ForegroundColor Green
-    Add-Stage 7 "Embed vektor" "OK" "Adobe=$nA, Dreamstime=$nD, VectEPS=$nVV, PixSVG=$nPV"
+
+    $nA = if ($doAdobe) { @(Get-ChildItem -LiteralPath $forAdobe -File -Filter $vecFilter).Count } else { -1 }
+    $nD = if ($doDream) { @(Get-ChildItem -LiteralPath $forDream -File -Filter $vecFilter).Count } else { -1 }
+    $nVV = if ($doVect -and $vecKind -eq "eps") { @(Get-ChildItem -LiteralPath $forVectEps -File -Filter "*.eps").Count } else { -1 }
+    $nPV = if ($doPix) { @(Get-ChildItem -LiteralPath $forPixSvg -File -Filter "*.svg").Count } else { -1 }
+    $fA = if ($doAdobe) { "$nA" } else { "-" }; $fD = if ($doDream) { "$nD" } else { "-" }
+    $fV = if ($doVect -and $vecKind -eq "eps") { "$nVV" } else { "-" }; $fP = if ($doPix) { "$nPV" } else { "-" }
+    Write-Host ("  Siap upload: Adobe={0}, Dreamstime={1}, Vecteezy-EPS={2}, Pixabay-SVG={3} (pasangan JPG+vektor)." -f $fA, $fD, $fV, $fP) -ForegroundColor Green
+    Add-Stage 7 "Embed vektor" "OK" "Adobe=$fA, Dreamstime=$fD, VectEPS=$fV, PixSVG=$fP"
 
     $vpPkgs = @{}
-    if ($vecKind -eq "eps") {
+    if ($doVect -and $vecKind -eq "eps") {
       $vpPkgs["Vecteezy EPS"] = @{ Dir = $forVectEps; Csv = (Join-Path $forVectEps ((Get-Item $vectCsv).BaseName + ".csv")); Kind = "eps"; PreviewDir = $prevDir }
     }
-    $vpPkgs["Pixabay SVG"] = @{ Dir = $forPixSvg; Csv = (Join-Path $forPixSvg ((Get-Item $pixCsv).BaseName + ".csv")); Kind = "svg"; PreviewDir = $prevDir }
-    try {
-      $w = Test-UploadReadiness $stock $vpPkgs
-      Write-Host ("  Validasi: {0} WARN -> {1}" -f $w, (Join-Path $stock "validation_vecteezy_pixabay.txt")) -ForegroundColor Gray
-    } catch {
-      Write-Host "  [!] Validasi gagal (non-fatal), lanjut." -ForegroundColor Yellow
+    if ($doPix) {
+      $vpPkgs["Pixabay SVG"] = @{ Dir = $forPixSvg; Csv = (Join-Path $forPixSvg ((Get-Item $pixCsv).BaseName + ".csv")); Kind = "svg"; PreviewDir = $prevDir }
+    }
+    if ($vpPkgs.Count -gt 0) {
+      try {
+        $w = Test-UploadReadiness $stock $vpPkgs
+        Write-Host ("  Validasi: {0} WARN -> {1}" -f $w, (Join-Path $stock "validation_vecteezy_pixabay.txt")) -ForegroundColor Gray
+      } catch {
+        Write-Host "  [!] Validasi gagal (non-fatal), lanjut." -ForegroundColor Yellow
+      }
+    } else {
+      Write-Host "  Validasi skip (platform tak dipilih)." -ForegroundColor Gray
     }
     }
 
@@ -1371,18 +1441,31 @@ function Process-Dir($DirInput, $Idx, $Total) {
         }
       }
     }
+    $doAdobeFin = Test-PlatformSelected "Adobe"
+    $doDreamFin = Test-PlatformSelected "Dreamstime"
+    $doVectFin = Test-PlatformSelected "Vecteezy"
+    $doPixFin = Test-PlatformSelected "Pixabay"
+
+    $upAdobe = if ($doAdobeFin) { $forAdobe } else { "(skip - tak dipilih)" }
+    $upDream = if ($doDreamFin) { $forDream } else { "(skip - tak dipilih)" }
     Write-Host ("   Total waktu : {0}" -f $script:swTotal.Elapsed.ToString("hh\:mm\:ss"))
-    Write-Host ("   Upload Adobe: {0}" -f $forAdobe)
-    Write-Host ("   Upload Dream: {0}" -f $forDream)
+    Write-Host ("   Upload Adobe: {0}" -f $upAdobe)
+    Write-Host ("   Upload Dream: {0}" -f $upDream)
     if ($Target -eq "JPG") {
-      Write-Host ("   Upload Vecteezy: {0}" -f $forVectPhoto)
-      Write-Host ("   Upload Pixabay : {0}" -f $forPixPhoto)
+      $upVect = if ($doVectFin) { $forVectPhoto } else { "(skip - tak dipilih)" }
+      $upPix = if ($doPixFin) { $forPixPhoto } else { "(skip - tak dipilih)" }
+      Write-Host ("   Upload Vecteezy: {0}" -f $upVect)
+      Write-Host ("   Upload Pixabay : {0}" -f $upPix)
     } elseif ($Target -eq "SVG") {
-      Write-Host "   Upload Vecteezy: (n/a - butuh Target=EPS)"
-      Write-Host ("   Upload Pixabay : {0}" -f $forPixSvg)
+      $upVect = if ($doVectFin) { "(n/a - butuh Target=EPS)" } else { "(skip - tak dipilih)" }
+      $upPix = if ($doPixFin) { $forPixSvg } else { "(skip - tak dipilih)" }
+      Write-Host ("   Upload Vecteezy: {0}" -f $upVect)
+      Write-Host ("   Upload Pixabay : {0}" -f $upPix)
     } else {
-      Write-Host ("   Upload Vecteezy: {0}" -f $forVectEps)
-      Write-Host ("   Upload Pixabay : {0}" -f $forPixSvg)
+      $upVect = if ($doVectFin) { $forVectEps } else { "(skip - tak dipilih)" }
+      $upPix = if ($doPixFin) { $forPixSvg } else { "(skip - tak dipilih)" }
+      Write-Host ("   Upload Vecteezy: {0}" -f $upVect)
+      Write-Host ("   Upload Pixabay : {0}" -f $upPix)
     }
     Write-Host ("   Log         : {0}" -f (Join-Path $stock "orchestrator.log"))
     Write-Host "  +==========================================+" -ForegroundColor Yellow
@@ -1391,13 +1474,15 @@ function Process-Dir($DirInput, $Idx, $Total) {
   $hasFatal = ($script:stages | Where-Object { $_.Status -notin @("OK", "SKIP", "PARTIAL") }).Count -gt 0
   $hasPartial = ($script:stages | Where-Object { $_.Status -eq "PARTIAL" }).Count -gt 0
   $st = if ($hasFatal) { "GAGAL" } elseif ($hasPartial) { "PARTIAL" } else { "OK" }
-  $vectOut = if ($Target -eq "JPG") { $forVectPhoto } elseif ($Target -eq "EPS") { $forVectEps } else { "-" }
-  $pixOut = if ($Target -eq "JPG") { $forPixPhoto } else { $forPixSvg }
+  $vectOut = if (-not (Test-PlatformSelected "Vecteezy")) { "-" } elseif ($Target -eq "JPG") { $forVectPhoto } elseif ($Target -eq "EPS") { $forVectEps } else { "-" }
+  $pixOut = if (-not (Test-PlatformSelected "Pixabay")) { "-" } elseif ($Target -eq "JPG") { $forPixPhoto } else { $forPixSvg }
+  $adobeOut = if (Test-PlatformSelected "Adobe") { $forAdobe } else { "-" }
+  $dreamOut = if (Test-PlatformSelected "Dreamstime") { $forDream } else { "-" }
   return [pscustomobject]@{
     Dir      = $SourceDir
     Status   = $st
-    Adobe    = $forAdobe
-    Dream    = $forDream
+    Adobe    = $adobeOut
+    Dream    = $dreamOut
     Vecteezy = $vectOut
     Pixabay  = $pixOut
     Waktu    = $script:swTotal.Elapsed.ToString("hh\:mm\:ss")
@@ -1415,6 +1500,12 @@ function Main {
   }
   $Target = $Target.ToUpper()
   if ($Target -notin @("JPG", "SVG", "EPS")) { Write-Host "  Target tidak dikenal: $Target (pilih JPG/SVG/EPS)." -ForegroundColor Red; exit 1 }
+
+  $Platforms = @(@($Platforms) | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+  if ($Platforms.Count -eq 0) { $Platforms = @("Adobe", "Dreamstime", "Vecteezy", "Pixabay") }
+  $canon = @{ "adobe" = "Adobe"; "dreamstime" = "Dreamstime"; "vecteezy" = "Vecteezy"; "pixabay" = "Pixabay" }
+  $Platforms = @($Platforms | ForEach-Object { $canon[("$_".Trim().ToLower())] } | Where-Object { $_ } | Select-Object -Unique)
+  if ($Platforms.Count -eq 0) { $Platforms = @("Adobe", "Dreamstime", "Vecteezy", "Pixabay") }
 
   # ---------- Daftar direktori (boleh >1) ----------
   $dirList = @($SourceDir | ForEach-Object { "$_".Trim().Trim('"').Trim("'") } | Where-Object { $_ })
@@ -1434,6 +1525,20 @@ function Main {
   if ($ask -and $script:boundKeys -notcontains "Copyright") {
     $Copyright = Ask-Default "Copyright" $Copyright
     $Creator = Ask-Default "Creator" $Creator
+  }
+  if ($ask -and $script:boundKeys -notcontains "Platforms") {
+    while ($true) {
+      $pAns = (Read-Host "Platform (koma, Enter=semua) [Adobe,Dreamstime,Vecteezy,Pixabay]").Trim()
+      if ([string]::IsNullOrWhiteSpace($pAns)) { break }
+      $pTry = @($pAns -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+      $pBad = @($pTry | Where-Object { @("adobe", "dreamstime", "vecteezy", "pixabay") -notcontains $_.ToLower() })
+      if ($pBad.Count -eq 0 -and $pTry.Count -gt 0) {
+        $canon2 = @{ "adobe" = "Adobe"; "dreamstime" = "Dreamstime"; "vecteezy" = "Vecteezy"; "pixabay" = "Pixabay" }
+        $Platforms = @($pTry | ForEach-Object { $canon2[$_.ToLower()] } | Select-Object -Unique)
+        break
+      }
+      Write-Host ("  Platform tak dikenal: {0} (pilih subset Adobe,Dreamstime,Vecteezy,Pixabay)." -f ($pBad -join ", ")) -ForegroundColor Red
+    }
   }
   # Backend metadata dikunci ke API (lokal dinonaktifkan - terlalu lambat).
   $script:MetadataBackend = "api"
