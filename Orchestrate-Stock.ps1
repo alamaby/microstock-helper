@@ -940,6 +940,22 @@ function Process-Dir($DirInput, $Idx, $Total) {
       }
     }
     if (-not $hasKey) { $fatal += "MICROSTOCK_API_KEY kosong - isi .env generator (copy .env.example)" }
+    $hasCf = $false
+    $cfAcc = [string]$env:MICROSTOCK_CF_ACCOUNT_ID
+    $cfTok = [string]$env:MICROSTOCK_CF_API_TOKEN
+    if ((-not [string]::IsNullOrWhiteSpace($cfAcc)) -and (-not [string]::IsNullOrWhiteSpace($cfTok))) { $hasCf = $true }
+    foreach ($df in @($dotA, $dotB)) {
+      if (Test-Path -LiteralPath $df) {
+        $hitAcc = @(Select-String -LiteralPath $df -Pattern "^\s*MICROSTOCK_CF_ACCOUNT_ID\s*=\s*\S" -ErrorAction SilentlyContinue).Count
+        $hitTok = @(Select-String -LiteralPath $df -Pattern "^\s*MICROSTOCK_CF_API_TOKEN\s*=\s*\S" -ErrorAction SilentlyContinue).Count
+        if ($hitAcc -gt 0 -and $hitTok -gt 0) { $hasCf = $true }
+      }
+    }
+    if ($hasCf) {
+      Write-Host "  [i] Provider API: Gateway lokal + Fallback Cloudflare Workers AI terkonfigurasi." -ForegroundColor DarkCyan
+    } else {
+      Write-Host "  [i] Provider API: Gateway lokal (Fallback Cloudflare belum dikonfigurasi)." -ForegroundColor DarkGray
+    }
     if ($fatal.Count -gt 0) {
       $fatal | ForEach-Object { Write-Host "  [X] $_" -ForegroundColor Red }
       Add-Stage 0 "Preflight" "GAGAL" ($fatal -join "; ")
@@ -1089,7 +1105,9 @@ function Process-Dir($DirInput, $Idx, $Total) {
     # ---------- TAHAP 5: metadata (dari JPG kecil) ----------
     Write-Stage 5 "Generate metadata (dari JPG kecil)"
     $runBat = Join-Path $GenDir "run.bat"
-    $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)"
+    $genCfg = Join-Path $GenDir "config.yaml"
+    $cfgOpt = if (Test-Path -LiteralPath $genCfg) { " --config `"$genCfg`"" } else { "" }
+    $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)$cfgOpt"
     Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
     cmd /c $genCmd
     $genExit = $LASTEXITCODE
@@ -1217,7 +1235,9 @@ function Process-Dir($DirInput, $Idx, $Total) {
         Write-Host "  metadata.csv mentah sudah lengkap, rebuild 2 CSV embed tanpa API." -ForegroundColor Yellow
       } else {
         $runBat = Join-Path $GenDir "run.bat"
-        $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)"
+        $genCfg = Join-Path $GenDir "config.yaml"
+        $cfgOpt = if (Test-Path -LiteralPath $genCfg) { " --config `"$genCfg`"" } else { "" }
+        $genCmd = "`"$runBat`" generate `"$small`" --output-dir `"$rawDir`" --backend $($script:MetadataBackend)$cfgOpt"
         Write-Host ("  > {0}" -f $genCmd) -ForegroundColor DarkGray
         cmd /c $genCmd
         $genExit = $LASTEXITCODE

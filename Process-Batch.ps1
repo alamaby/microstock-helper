@@ -83,7 +83,9 @@ function Step($n, $title) {
 # ---------- [1/3] generate ----------
 Step 1 "GENERATE metadata ($Backend)"
 $flat = @(Get-ChildItem $BatchDir -File -Include *.jpg, *.jpeg, *.png, *.webp 2>$null).Count -gt 0
+$genCfg = Join-Path $GenDir "config.yaml"
 $genArgs = @("generate", $BatchDir, "--output-dir", $OutApi, "--backend", $Backend)
+if (Test-Path -LiteralPath $genCfg) { $genArgs += @("--config", $genCfg) }
 if (-not $Recursive -and $flat) { $genArgs += "--no-recursive" }
 if ($Limit -gt 0) { $genArgs += @("--limit", "$Limit") }
 if ($DryRun) { $genArgs += "--dry-run" }

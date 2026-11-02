@@ -119,6 +119,9 @@ Satu pintu untuk seluruh alur: rename `001_...` (in-place) → convert JPG kecil
 # Jalur vektor (SVG saja, atau EPS+JPG):
 .\Orchestrate-Stock.ps1 -SourceDir "D:\v1" -Target SVG -Force
 .\Orchestrate-Stock.ps1 -SourceDir "D:\v1" -Target EPS -PreviewWidth 6000 -Force
+# Hanya platform tertentu (daftar lengkap di bawah):
+.\Orchestrate-Stock.ps1 -SourceDir "D:\batch1" -Target JPG -Platforms Adobe,Dreamstime
+.\Orchestrate-Stock.ps1 -SourceDir "D:\batch1" -Target EPS -Platforms Vecteezy -Force
 ```
 
 | Param | Keterangan |
@@ -128,13 +131,96 @@ Satu pintu untuk seluruh alur: rename `001_...` (in-place) → convert JPG kecil
 | `-Scale` | Skala upscale JPG 2–5, default `5` (jalur JPG saja) |
 | `-PreviewWidth` | Lebar render preview JPG vektor 1000–15000px, default `6000` (jalur SVG/EPS) |
 | `-Copyright` / `-Creator` | Default `alamaby` |
-| `-Force` | Ulangi paksa semua tahap (teruskan ke child script; menonaktifkan skip/reuse resume). Prompt dihindari dengan mengikat semua param (contoh hands-free), bukan dengan `-Force`; jangan pakai untuk resume |
+| `-Platforms` | Subset `Adobe,Dreamstime,Vecteezy,Pixabay`, default semua (= perilaku lama). Hanya platform terpilih yang paketnya ditulis/divalidasi; sisanya dibiarkan utuh. Case-insensitive, duplikat dihapus, `@()` = semua; salah ketik ditolak `ValidateSet` |
+| `-Force` | Ulangi paksa tahap hulu (convert/upscale/trace/preview/metadata; menonaktifkan skip/reuse resume). Tidak memengaruhi `-Platforms`. Prompt dihindari dengan mengikat semua param (contoh hands-free), bukan dengan `-Force`; jangan pakai untuk resume |
 
 Cabang target:
 
 - `JPG`: convert JPG kecil → upscale 5x (Upscayl) → JPG final → embed 4 paket (`for_adobe/`, `for_dreamstime/`, `for_vecteezy_photo/`, `for_pixabay_photo/`; JPG triple-sync + salinan CSV Vecteezy/Pixabay).
 - `SVG`: trace JPG kecil → SVG (`Trace-Svg`, vtracer color-cluster/cutout/spline) → render preview JPG besar dari SVG (Inkscape + ffmpeg) → embed (`Embed-VectorMetadata`): JPG triple-sync + SVG injeksi `<title>`/`<desc>`/RDF. Paket `for_adobe_svg/` + `for_dreamstime_svg/` + `for_pixabay_svg/` berisi pasangan `.jpg`+`.svg` basename sama + salinan CSV agensi (Vecteezy vektor hanya di jalur EPS).
 - `EPS`: sama seperti SVG, ditambah SVG→EPS (Inkscape CLI). Paket `for_adobe_eps/` + `for_dreamstime_eps/` berisi pasangan `.jpg`+`.eps` saja (SVG intermediate tidak dikirim) + `for_vecteezy_eps/` + `for_pixabay_svg/` (ikut terisi di jalur EPS). EPS di-embed XMP-dc via ExifTool.
+
+### Kombinasi `-Platforms` (15 subset × 3 target)
+
+Tanpa `-Platforms` = semua platform (perilaku lama). `-Force` bisa ditempel ke baris mana pun — efeknya hanya pada tahap hulu, bukan pada pemilihan platform.
+
+Matriks folder per target (di dalam `<SourceDir>\_stock\`):
+
+| Target | Adobe | Dreamstime | Vecteezy | Pixabay |
+|---|---|---|---|---|
+| `JPG` | `for_adobe/` | `for_dreamstime/` | `for_vecteezy_photo/` | `for_pixabay_photo/` |
+| `SVG` | `for_adobe_svg/` | `for_dreamstime_svg/` | — (tak didukung) | `for_pixabay_svg/` |
+| `EPS` | `for_adobe_eps/` | `for_dreamstime_eps/` | `for_vecteezy_eps/` | `for_pixabay_svg/` |
+
+Folder selalu dibuat saat startup walau platformnya tak dipilih — isinya saja yang tak disentuh (tidak ditulis, tidak dihapus, tidak divalidasi; summary tampil `-`, return object `"-"`).
+
+**Target `JPG`** — kolom Ditulis:
+
+| `-Platforms` | Ditulis |
+|---|---|
+| *(default)* | `for_adobe`, `for_dreamstime`, `for_vecteezy_photo`, `for_pixabay_photo` |
+| `Adobe` | `for_adobe` |
+| `Dreamstime` | `for_dreamstime` |
+| `Vecteezy` | `for_vecteezy_photo` (+ sanitasi FTP + rewrite CSV paket) |
+| `Pixabay` | `for_pixabay_photo` |
+| `Adobe,Dreamstime` | `for_adobe`, `for_dreamstime` |
+| `Adobe,Vecteezy` | `for_adobe`, `for_vecteezy_photo` |
+| `Adobe,Pixabay` | `for_adobe`, `for_pixabay_photo` |
+| `Dreamstime,Vecteezy` | `for_dreamstime`, `for_vecteezy_photo` |
+| `Dreamstime,Pixabay` | `for_dreamstime`, `for_pixabay_photo` |
+| `Vecteezy,Pixabay` | `for_vecteezy_photo`, `for_pixabay_photo` |
+| `Adobe,Dreamstime,Vecteezy` | semua kecuali `for_pixabay_photo` |
+| `Adobe,Dreamstime,Pixabay` | semua kecuali `for_vecteezy_photo` |
+| `Adobe,Vecteezy,Pixabay` | semua kecuali `for_dreamstime` |
+| `Dreamstime,Vecteezy,Pixabay` | semua kecuali `for_adobe` |
+
+Validasi JPG (`validation_vecteezy_pixabay.txt`): hanya paket Vecteezy/Pixabay terpilih; bila keduanya tak dipilih → `Validasi skip`, laporan lama dipertahankan.
+
+**Target `SVG`** — Ditulis (setiap subset ber-Vecteezy: warning kuning, Vecteezy di-skip):
+
+| `-Platforms` | Ditulis |
+|---|---|
+| *(default)* | `for_adobe_svg`, `for_dreamstime_svg`, `for_pixabay_svg` (+ warning Vecteezy) |
+| `Adobe` | `for_adobe_svg` |
+| `Dreamstime` | `for_dreamstime_svg` |
+| `Pixabay` | `for_pixabay_svg` |
+| `Vecteezy` | *(nihil — warning, bukan error)* |
+| `Adobe,Dreamstime` | `for_adobe_svg`, `for_dreamstime_svg` |
+| `Adobe,Pixabay` | `for_adobe_svg`, `for_pixabay_svg` |
+| `Dreamstime,Pixabay` | `for_dreamstime_svg`, `for_pixabay_svg` |
+| `Adobe,Vecteezy` | `for_adobe_svg` (+ warning) |
+| `Dreamstime,Vecteezy` | `for_dreamstime_svg` (+ warning) |
+| `Pixabay,Vecteezy` | `for_pixabay_svg` (+ warning) |
+| `Adobe,Dreamstime,Pixabay` | ketiga folder non-Vecteezy (tanpa warning) |
+| `Adobe,Dreamstime,Vecteezy` | `for_adobe_svg`, `for_dreamstime_svg` (+ warning) |
+| `Adobe,Vecteezy,Pixabay` | `for_adobe_svg`, `for_pixabay_svg` (+ warning) |
+| `Dreamstime,Vecteezy,Pixabay` | `for_dreamstime_svg`, `for_pixabay_svg` (+ warning) |
+
+Validasi SVG: hanya `for_pixabay_svg` bila Pixabay terpilih.
+
+**Target `EPS`** — Ditulis:
+
+| `-Platforms` | Ditulis |
+|---|---|
+| *(default)* | `for_adobe_eps`, `for_dreamstime_eps`, `for_vecteezy_eps`, `for_pixabay_svg` |
+| `Adobe` | `for_adobe_eps` |
+| `Dreamstime` | `for_dreamstime_eps` |
+| `Vecteezy` | `for_vecteezy_eps` (+ sanitasi FTP + rewrite CSV paket) |
+| `Pixabay` | `for_pixabay_svg` (SVG dari `05_svg`, bukan dari EPS) |
+| `Adobe,Dreamstime` | `for_adobe_eps`, `for_dreamstime_eps` |
+| `Adobe,Vecteezy` | `for_adobe_eps`, `for_vecteezy_eps` |
+| `Adobe,Pixabay` | `for_adobe_eps`, `for_pixabay_svg` |
+| `Dreamstime,Vecteezy` | `for_dreamstime_eps`, `for_vecteezy_eps` |
+| `Dreamstime,Pixabay` | `for_dreamstime_eps`, `for_pixabay_svg` |
+| `Vecteezy,Pixabay` | `for_vecteezy_eps`, `for_pixabay_svg` |
+| `Adobe,Dreamstime,Vecteezy` | semua kecuali `for_pixabay_svg` |
+| `Adobe,Dreamstime,Pixabay` | semua kecuali `for_vecteezy_eps` |
+| `Adobe,Vecteezy,Pixabay` | semua kecuali `for_dreamstime_eps` |
+| `Dreamstime,Vecteezy,Pixabay` | semua kecuali `for_adobe_eps` |
+
+Validasi EPS: `for_vecteezy_eps` (bila terpilih) + `for_pixabay_svg` (bila terpilih); keduanya tak dipilih → skip.
+
+Pitfall: tulis `-Platforms Adobe,Dreamstime` (array, tanpa kutip pembungkus) — `-Platforms "Adobe,Dreamstime"` (satu string) ditolak `ValidateSet`.
 
 Catatan: ExifTool tidak mendukung tulis SVG, jadi metadata SVG adalah injeksi XML best-effort (CSV pendamping tetap sumber kebenaran). Uji upload 1 file per agensi dulu sebelum batch besar.
 

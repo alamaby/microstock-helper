@@ -1,9 +1,15 @@
 # Project Memory Index
 
 - **Format Version**: 1.0.0
-- **Last Updated**: 2026-10-11 22:18:00 +07:00
+- **Last Updated**: 2026-11-03 05:09:00 +07:00
 
 ## Current State
+- `microstock-metadata-generator` mendukung rantai provider API multi-tier dengan fallback otomatis (`local-gateway` -> `cloudflare`), didukung file konfigurasi operasional `config.yaml` dan auto-discovery jika flag `--config` tidak diberikan.
+- Respon API dari proxy/gateway (seperti 9router/OpenCode) yang menambahkan trailer SSE (`data: [DONE]`) dapat ditangani dengan parsing toleran `raw_decode` tanpa error `Extra data`.
+- Prioritas konfigurasi model menghormati hierarki: CLI flag `--api-model` > Environment variable `MICROSTOCK_API_MODEL` > YAML config.
+- Nilai model API dapat di-override langsung melalui environment variable `MICROSTOCK_API_MODEL` dan `MICROSTOCK_CF_MODEL` pada file `.env`.
+- `Orchestrate-Stock.ps1` dan `Process-Batch.ps1` menyertakan argumen `--config` secara otomatis dan memvalidasi kesiapan fallback Cloudflare pada tahap Preflight.
+- Seluruh script otomatisasi dan dokumentasi penggunaan microstock telah disalin ke Google Drive `G:\My Drive\microstock\tools` dengan struktur terorganisir, siap pakai, dan higienis (tanpa file `.env` rahasia dan cache virtualenv).
 - `microstock-metadata-generator` mendukung input gambar dan video klip (8–10s, visual-only, backend `api`).
 - Mendukung ekspor metadata video 4 platform stock: Adobe Stock, Dreamstime, Vecteezy, dan Pixabay via `scripts/csv_to_embed.py`.
 - `Orchestrate-Stock.ps1` mendukung parameter `-Platforms` (subset Adobe, Dreamstime, Vecteezy, Pixabay; default semua) untuk pembuatan atau pembuatan ulang selektif paket upload tanpa menyentuh platform lain.
@@ -14,6 +20,9 @@
 - Pipeline teruji penuh: 121 unit/integration test passed, parser 0 error, dan verifikasi matriks manual 6 kasus lolos.
 
 ## Active Decisions
+- Generator metadata API mendukung provider chain terurut: `local-gateway` (OpenCode/local proxy) dicoba terlebih dahulu; jika terkena HTTP 429 atau kegagalan transport, otomatis failover ke `cloudflare` Workers AI.
+- `api_inference.py` memastikan `.env` dimuat sebelum evaluasi `model_env`/`account_env` agar override model dari `.env` segera aktif pada provider pertama.
+- `Orchestrate-Stock.ps1` dan `Process-Batch.ps1` otomatis mendeteksi dan mengoper `--config config.yaml` ke generator metadata.
 - `Orchestrate-Stock.ps1` menyediakan opsi `-Platforms` (default 4 agensi); platform yang tidak dipilih tidak ditulis ulang, tidak divalidasi, tidak dihapus, dan diberi label `(skip - tak dipilih)` pada ringkasan serta `"-"` pada return object.
 - Kombinasi `Target=SVG` dengan `Vecteezy` memunculkan peringatan bahwa vektor Vecteezy membutuhkan format EPS dan melanjutkan tanpa error fatal.
 - `Test-UploadReadiness` hanya dijalankan jika setidaknya salah satu platform Vecteezy atau Pixabay terpilih pada run tersebut.
@@ -34,6 +43,9 @@
 - Pengunggahan ke portal Pixabay memerlukan centang manual `AI-generated` dan pengisian tag melalui UI.
 
 ## Recent Entries
+- [2026-11-03 05:09:00 — Fix API Trailing SSE Extra Data & Cloudflare Vision Fallback](file:///C:/Side/Microstock/.memory/2026-11-03/050900-fix-api-response-trailing-sse-and-cf-vision.md)
+- [2026-10-28 22:30:00 — Cloudflare Fallback & API Model Configuration](file:///C:/Side/Microstock/.memory/2026-10-28/223000-cloudflare-fallback-and-api-model-configuration.md)
+- [2026-10-28 20:05:30 — Backup Scripts and Documentation to Google Drive](file:///C:/Side/Microstock/.memory/2026-10-28/200530-backup-scripts-docs-google-drive.md)
 - [2026-10-11 22:18:00 — Orchestrator Platform Filter Implementation](file:///C:/Side/Microstock/.memory/2026-10-11/221800-orchestrator-platform-filter.md)
 - [2026-10-11 09:12:00 — Metadata Partial-Failure Tolerance (Tahap 5 JPG & Tahap 3V)](file:///C:/Side/Microstock/.memory/2026-10-11/091200-metadata-partial-failure-tolerance.md)
 - [2026-10-10 22:48:00 — Vecteezy + Pixabay Upload Directories Implementation](file:///C:/Side/Microstock/.memory/2026-10-10/224800-vecteezy-pixabay-upload-directories.md)
