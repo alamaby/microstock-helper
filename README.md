@@ -82,7 +82,7 @@ Aplikasi dapat dijalankan melalui launcher `run.bat` di root:
 Menjalankan orkestrator end-to-end dari raw images hingga paket agensi siap upload:
 
 ```cmd
-# Jalur Foto / Raster (JPG)
+# Jalur Foto / Raster (JPG) dengan skala upscale 5x
 run.bat run "D:\Karya\Batch_01" --target JPG --scale 5
 
 # Jalur Vektor SVG (Adobe, Dreamstime, Pixabay)
@@ -91,58 +91,95 @@ run.bat run "D:\Karya\Batch_Vektor" --target SVG
 # Jalur Vektor EPS + Preview JPG (Adobe, Dreamstime, Vecteezy, Pixabay)
 run.bat run "D:\Karya\Batch_Vektor" --target EPS --preview-width 6000
 
-# Hanya untuk platform tertentu:
+# Menentukan subset agensi target tertentu:
 run.bat run "D:\Karya\Batch_01" --target JPG --platforms Adobe,Dreamstime
+
+# Menyesuaikan nama Creator & Copyright notice:
+run.bat run "D:\Karya\Batch_01" --target JPG --copyright "alamaby" --creator "alamaby"
+
+# Force rebuild (memproses ulang seluruh tahap hulu dari awal, abaikan resume):
+run.bat run "D:\Karya\Batch_01" --target JPG --force
 ```
+
+> **Fitur Resume Otomatis**: Jika folder target sebelumnya sudah pernah diproses (misal selesai target JPG), Anda dapat menjalankan target vektor (SVG atau EPS) pada folder yang sama tanpa menyertakan flag `--force`. Pipeline secara cerdas akan melewati tahap yang sudah lengkap (konversi & metadata AI yang sudah ada akan di-reuse tanpa memanggil API kembali) dan hanya memproses tahap vektor yang belum selesai.
 
 ### 2. Batch Processing Metadata & Embed (`batch`)
 
 Menjalankan alur 3 langkah standar: generate metadata AI -> convert CSV template -> embed ke folder output agensi:
 
 ```cmd
+# Memproses batch untuk Adobe Stock dan Dreamstime sekaligus
 run.bat batch "D:\Karya\Batch_01" --agencies both
+
+# Uji coba tanpa menulis file akhir (Dry Run) dengan limit item
 run.bat batch "D:\Karya\Batch_01" --agencies adobe --limit 5 --dry-run
+
+# Menimpa output yang sudah ada sebelumnya
+run.bat batch "D:\Karya\Batch_01" --agencies both --overwrite
 ```
 
-### 3. Konversi Raster ke JPG (`convert`)
+### 3. Generasi Metadata AI Mandiri (`generate`)
+
+Menjalankan inferensi AI Vision murni untuk menghasilkan master metadata CSV tanpa alur orkestrator:
+
+```cmd
+# Generasi metadata untuk seluruh media (gambar / video) di direktori
+run.bat generate "D:\Karya\Batch_01" --output-dir "D:\Karya\Metadata"
+
+# Membatasi jumlah item dan menimpa metadata yang sudah ada
+run.bat generate "D:\Karya\Batch_01" --output-dir "D:\Karya\Metadata" --limit 10 --overwrite
+```
+
+### 4. Konversi Raster ke JPG (`convert`)
 
 Mengonversi PNG/WebP/BMP ke format JPEG kualitas tinggi dengan alpha compositing latar belakang putih:
 
 ```cmd
+# Konversi standar kualitas 95
 run.bat convert "D:\Karya\RawPNG" --out "D:\Karya\JPG" --quality 95
+
 # Downsampling sisi terpanjang ke 1000px (untuk keperluan preview / small)
 run.bat convert "D:\Karya\RawPNG" --out "D:\Karya\JPG_Small" --max-edge 1000
+
+# Menimpa file JPG yang sudah ada di folder tujuan
+run.bat convert "D:\Karya\RawPNG" --out "D:\Karya\JPG" --overwrite
 ```
 
-### 4. Penomoran Kronologis (`renumber`)
+### 5. Penomoran Kronologis (`renumber`)
 
 Mengurutkan file media berdasarkan tanggal pembuatan file lalu memberikan awalan urut `001_...`:
 
 ```cmd
-# Cek pratinjau rencana rename
+# Cek pratinjau rencana rename tanpa mengubah file (Dry Run)
 run.bat renumber "D:\Karya\Batch_01" --dry-run
 
-# Eksekusi rename
+# Eksekusi rename kronologis
 run.bat renumber "D:\Karya\Batch_01"
 ```
 
-### 5. Upscale Gambar (`upscale`)
+### 6. Upscale Gambar (`upscale`)
 
-Melakukan upscaling gambar secara batch via Upscayl CLI:
+Melakukan upscaling gambar secara batch via Upscayl CLI (aman dari batas MAX_PATH 260 karakter):
 
 ```cmd
+# Upscale 5x (default skala rekomendasi microstock)
 run.bat upscale "D:\Karya\JPG_Small" --out "D:\Karya\Upscaled" --scale 5
+
+# Upscale 4x dan timpa hasil yang sudah ada
+run.bat upscale "D:\Karya\JPG_Small" --out "D:\Karya\Upscaled" --scale 4 --overwrite
 ```
 
-### 6. Tracing Vektor SVG (`trace`)
+### 7. Tracing Vektor SVG (`trace`)
 
 Melakukan tracing kurva spline otomatis via vtracer CLI:
 
 ```cmd
 run.bat trace "D:\Karya\JPG_Small" --out "D:\Karya\SVG"
+# Timpa file SVG yang sudah ada
+run.bat trace "D:\Karya\JPG_Small" --out "D:\Karya\SVG" --overwrite
 ```
 
-### 7. Render Preview Vektor (`vector-preview`)
+### 8. Render Preview Vektor (`vector-preview`)
 
 Merender SVG menjadi file gambar JPG beresolusi tinggi (default 6000px):
 
@@ -150,7 +187,7 @@ Merender SVG menjadi file gambar JPG beresolusi tinggi (default 6000px):
 run.bat vector-preview "D:\Karya\SVG" --out "D:\Karya\Previews" --width 6000
 ```
 
-### 8. Konversi SVG ke EPS (`convert-eps`)
+### 9. Konversi SVG ke EPS (`convert-eps`)
 
 Mengonversi file SVG ke format PostScript EPS via Inkscape CLI:
 
@@ -158,20 +195,28 @@ Mengonversi file SVG ke format PostScript EPS via Inkscape CLI:
 run.bat convert-eps "D:\Karya\SVG" --out "D:\Karya\EPS"
 ```
 
-### 9. Embed Metadata JPG/PNG (`embed-jpg`)
+### 10. Embed Metadata JPG/PNG (`embed-jpg`)
 
-Menyuntikkan judul, deskripsi, dan kata kunci dari file CSV ke file gambar via ExifTool:
+Menyuntikkan judul, deskripsi, dan kata kunci dari file CSV ke file gambar via ExifTool (triple-sync IPTC+XMP+EXIF):
 
 ```cmd
+# Embed dan salin ke folder output baru
 run.bat embed-jpg --csv "D:\Karya\metadata.csv" --images "D:\Karya\JPG" --out "D:\Karya\for_adobe"
+
+# Embed langsung di tempat (in-place) pada folder gambar sumber
+run.bat embed-jpg --csv "D:\Karya\metadata.csv" --images "D:\Karya\JPG"
 ```
 
-### 10. Embed Metadata Paket Vektor (`embed-vector`)
+### 11. Embed Metadata Paket Vektor (`embed-vector`)
 
 Menyuntikkan metadata ke pasangan file vektor (SVG/EPS) dan preview JPG pendamping:
 
 ```cmd
+# Paket EPS (untuk Adobe Stock, Dreamstime, Vecteezy)
 run.bat embed-vector --csv "D:\Karya\metadata.csv" --jpg-dir "D:\Karya\Previews" --vec-dir "D:\Karya\EPS" --out "D:\Karya\for_adobe_eps"
+
+# Paket SVG (untuk Adobe Stock, Dreamstime, Pixabay)
+run.bat embed-vector --csv "D:\Karya\metadata.csv" --jpg-dir "D:\Karya\Previews" --vec-dir "D:\Karya\SVG" --out "D:\Karya\for_adobe_svg"
 ```
 
 ---
