@@ -59,3 +59,35 @@ def test_cli_preflight_abort(monkeypatch, capsys, tmp_path):
     assert ret == 2
     captured = capsys.readouterr()
     assert "Preflight dependency check failed" in captured.err
+
+
+def test_cli_embed_jpg(tmp_path, capsys, monkeypatch):
+    from microstock import cli
+
+    # Mock validate_dependencies so it doesn't require actual exiftool binary in unit test
+    monkeypatch.setattr(cli, "validate_dependencies", lambda tools: None)
+
+    # Mock embed_jpg_file
+    embedded = []
+    def mock_embed(dest, title, desc, kws, copyr, creator):
+        embedded.append((dest, title))
+        return True
+
+    from microstock.core import metadata_embed
+    monkeypatch.setattr(metadata_embed, "embed_jpg_file", mock_embed)
+
+    images_dir = tmp_path / "images"
+    out_dir = tmp_path / "out"
+    images_dir.mkdir()
+    (images_dir / "001.jpg").write_text("data")
+
+    csv_file = tmp_path / "meta.csv"
+    csv_file.write_text("Filename,Title,Description,Keywords\n001.jpg,Sample Title,Sample Desc,kw1\n", encoding="utf-8")
+
+    ret = main(["embed-jpg", "--csv", str(csv_file), "--images", str(images_dir), "--out", str(out_dir)])
+    assert ret == 0
+    captured = capsys.readouterr()
+    assert "Embedded metadata into 1 image files" in captured.out
+    assert len(embedded) == 1
+    assert (out_dir / "001.jpg").exists()
+
