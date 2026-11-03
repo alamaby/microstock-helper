@@ -1,0 +1,25 @@
+[project]
+name = "microstock-helper"
+version = "1.0.0"
+description = "Unified Microstock automation suite (raster, vector, AI metadata, & orchestration)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "pillow",
+  "pydantic>=2",
+  "pyyaml",
+]
+
+[project.scripts]
+microstock = "microstock.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100

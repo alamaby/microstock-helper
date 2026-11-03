@@ -1,34 +1,29 @@
 # Project Memory Index
 
 - **Format Version**: 1.0.0
-- **Last Updated**: 2026-11-03 08:55:00 +07:00
+- **Last Updated**: 2026-11-03 10:30:00 +07:00
 
 ## Current State
-- Mekanisme local AI model (Qwen2.5-VL via PyTorch / Transformers) telah sepenuhnya dihapus dari `microstock-metadata-generator`. Modul kini murni beroperasi menggunakan backend Vision API multi-tier (`local-gateway` OpenAI-compatible dengan failover otomatis ke `cloudflare` Workers AI).
-- Dependensi dipangkas drastis (hanya memerlukan `pillow`, `pydantic>=2`, `pyyaml` tanpa PyTorch, torchvision, transformers, accelerate, atau bitsandbytes).
-- Command `microstock-metadata doctor` dan script `scripts/verify_environment.py` telah diperbarui untuk memvalidasi Python, PIL, pydantic, yaml, ffmpeg, ffprobe, dan status konfigurasi API key tanpa ketergantungan model lokal.
-- `Orchestrate-Stock.ps1` dan `Process-Batch.ps1` terkunci ke backend API.
-- Seluruh 126 unit/integration tests lulus dengan mulus.
-- Respon API dari proxy/gateway (seperti 9router/OpenCode) yang menambahkan trailer SSE (`data: [DONE]`) dapat ditangani dengan parsing toleran `raw_decode` tanpa error `Extra data`.
-- Prioritas konfigurasi model menghormati hierarki: CLI flag `--api-model` > Environment variable `MICROSTOCK_API_MODEL` > YAML config.
-- `microstock-metadata-generator` mendukung input gambar dan video klip (8–10s, visual-only, backend `api`).
-- Mendukung ekspor metadata video 4 platform stock: Adobe Stock, Dreamstime, Vecteezy, dan Pixabay via `scripts/csv_to_embed.py`.
-- `Orchestrate-Stock.ps1` mendukung parameter `-Platforms` (subset Adobe, Dreamstime, Vecteezy, Pixabay; default semua) untuk pembuatan atau pembuatan ulang selektif paket upload tanpa menyentuh platform lain.
-- `Orchestrate-Stock.ps1` menoleransi kegagalan parsial generator metadata (`exit 1` dengan `OK > 0`), menandai status `PARTIAL`, mencatat file gagal ke `failed_05_metadata.txt` / `failed_03_metadata.txt`, dan melanjutkan embed untuk file yang berhasil.
+- Seluruh fungsionalitas otomasi microstock (utilitas raster, renumbering, upscaler, tracer vektor, vector render/convert, embedder ExifTool/SVG XML, dan orkestrator pipeline multi-platform) telah dikonsolidasikan ke dalam satu paket aplikasi Python terpadu (`microstock-helper` / `microstock`).
+- CLI terpadu dilengkapi startup preflight dependency check yang otomatis memverifikasi keberadaan `exiftool`, `upscayl`, `vtracer`, `inkscape`, `ffmpeg`, `ffprobe`, dan status API token sebelum tugas pipeline dijalankan.
+- Konversi gambar raster (PNG/WebP/TIF/BMP ke JPEG) dioperasikan secara native via Pillow dengan penanganan alpha compositing ke latar putih standar microstock.
+- Mekanisme local AI model (Qwen2.5-VL via PyTorch) telah dihapus dari codebase; kini murni beroperasi menggunakan backend Vision API multi-tier (`local-gateway` OpenAI-compatible dengan failover otomatis ke `cloudflare` Workers AI).
+- Seluruh script PowerShell legacy (`Orchestrate-Stock.ps1`, `Process-Batch.ps1`, `Embed-JpgMetadata.ps1`, dll.) tetap dipertahankan untuk backward compatibility.
+- Seluruh unit tests (25 tests di `tests/` dan 126 tests di `microstock-metadata-generator/tests`) lulus 100%.
 
 ## Active Decisions
+- Konsolidasi satu pintu: CLI terpadu `microstock` menyediakan subcommand: `run`, `batch`, `convert`, `renumber`, `upscale`, `trace`, `vector-preview`, `convert-eps`, `embed-jpg`, `embed-vector`, `doctor`, dan `generate`.
+- Startup preflight check wajib memvalidasi tool CLI eksternal sebelum menjalankan operasi pipeline untuk mencegah kegagalan di tengah jalan.
+- Batas `MAX_PATH` 260 karakter Upscayl diatasi dengan sandboxing direktori `%TEMP%`.
 - Mekanisme local model AI LLM dihapus sepenuhnya dari codebase; opsi `--backend local` ditolak dengan exit code 2 (Configuration Error).
-- Parameter `--backend api` dipertahankan sebagai default dan untuk backward compatibility dengan seluruh script runner/orkestrator.
-- Generator metadata API mendukung provider chain terurut: `local-gateway` (OpenCode/local proxy) dicoba terlebih dahulu; jika terkena HTTP 429 atau kegagalan transport, otomatis failover ke `cloudflare` Workers AI.
-- `api_inference.py` memastikan `.env` dimuat sebelum evaluasi `model_env`/`account_env` agar override model dari `.env` segera aktif pada provider pertama.
-- `Orchestrate-Stock.ps1` dan `Process-Batch.ps1` otomatis mendeteksi dan mengoper `--config config.yaml` ke generator metadata.
-- Video input eksklusif untuk backend `api`.
+- Generator metadata API mendukung provider chain terurut: `local-gateway` dicoba terlebih dahulu; jika terkena HTTP 429 atau kegagalan transport, otomatis failover ke `cloudflare` Workers AI.
 
 ## Open Items / Blockers
 - Konfirmasi open questions portal: verifikasi manual limit 4 portal, format nomor vs nama kategori Adobe, dan kategorisasi Vecteezy sebelum publish live batch.
 - Pengunggahan ke portal Pixabay memerlukan centang manual `AI-generated` dan pengisian tag melalui UI.
 
 ## Recent Entries
+- [2026-11-03 10:30:00 — Consolidate Microstock Scripts to Unified Python Application](file:///C:/Side/Microstock/.memory/2026-11-03/103000-consolidate-microstock-scripts-to-python.md)
 - [2026-11-03 08:55:00 — Remove Local AI Model Backend](file:///C:/Side/Microstock/.memory/2026-11-03/085500-remove-local-ai-model-backend.md)
 - [2026-11-03 05:09:00 — Fix API Trailing SSE Extra Data & Cloudflare Vision Fallback](file:///C:/Side/Microstock/.memory/2026-11-03/050900-fix-api-response-trailing-sse-and-cf-vision.md)
 - [2026-10-28 22:30:00 — Cloudflare Fallback & API Model Configuration](file:///C:/Side/Microstock/.memory/2026-10-28/223000-cloudflare-fallback-and-api-model-configuration.md)
