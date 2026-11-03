@@ -18,7 +18,7 @@
   both | adobe | dreamstime. Default: both.
 
 .PARAMETER Backend
-  Backend generator: api (default) | local.
+  Backend generator: api (OpenAI-compatible & Cloudflare).
 
 .PARAMETER Recursive
   Paksa scan rekursif. Default: otomatis --no-recursive bila ada file
@@ -42,7 +42,7 @@
 param(
   [Parameter(Mandatory = $true, Position = 0)][string]$BatchDir,
   [ValidateSet("both", "adobe", "dreamstime")][string]$Agency = "both",
-  [ValidateSet("api", "local")][string]$Backend = "api",
+  [ValidateSet("api")][string]$Backend = "api",
   [switch]$Recursive,
   [int]$Limit = 0,
   [switch]$DryRun,

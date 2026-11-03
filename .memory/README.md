@@ -1,48 +1,35 @@
 # Project Memory Index
 
 - **Format Version**: 1.0.0
-- **Last Updated**: 2026-11-03 05:09:00 +07:00
+- **Last Updated**: 2026-11-03 08:55:00 +07:00
 
 ## Current State
-- `microstock-metadata-generator` mendukung rantai provider API multi-tier dengan fallback otomatis (`local-gateway` -> `cloudflare`), didukung file konfigurasi operasional `config.yaml` dan auto-discovery jika flag `--config` tidak diberikan.
+- Mekanisme local AI model (Qwen2.5-VL via PyTorch / Transformers) telah sepenuhnya dihapus dari `microstock-metadata-generator`. Modul kini murni beroperasi menggunakan backend Vision API multi-tier (`local-gateway` OpenAI-compatible dengan failover otomatis ke `cloudflare` Workers AI).
+- Dependensi dipangkas drastis (hanya memerlukan `pillow`, `pydantic>=2`, `pyyaml` tanpa PyTorch, torchvision, transformers, accelerate, atau bitsandbytes).
+- Command `microstock-metadata doctor` dan script `scripts/verify_environment.py` telah diperbarui untuk memvalidasi Python, PIL, pydantic, yaml, ffmpeg, ffprobe, dan status konfigurasi API key tanpa ketergantungan model lokal.
+- `Orchestrate-Stock.ps1` dan `Process-Batch.ps1` terkunci ke backend API.
+- Seluruh 126 unit/integration tests lulus dengan mulus.
 - Respon API dari proxy/gateway (seperti 9router/OpenCode) yang menambahkan trailer SSE (`data: [DONE]`) dapat ditangani dengan parsing toleran `raw_decode` tanpa error `Extra data`.
 - Prioritas konfigurasi model menghormati hierarki: CLI flag `--api-model` > Environment variable `MICROSTOCK_API_MODEL` > YAML config.
-- Nilai model API dapat di-override langsung melalui environment variable `MICROSTOCK_API_MODEL` dan `MICROSTOCK_CF_MODEL` pada file `.env`.
-- `Orchestrate-Stock.ps1` dan `Process-Batch.ps1` menyertakan argumen `--config` secara otomatis dan memvalidasi kesiapan fallback Cloudflare pada tahap Preflight.
-- Seluruh script otomatisasi dan dokumentasi penggunaan microstock telah disalin ke Google Drive `G:\My Drive\microstock\tools` dengan struktur terorganisir, siap pakai, dan higienis (tanpa file `.env` rahasia dan cache virtualenv).
 - `microstock-metadata-generator` mendukung input gambar dan video klip (8–10s, visual-only, backend `api`).
 - Mendukung ekspor metadata video 4 platform stock: Adobe Stock, Dreamstime, Vecteezy, dan Pixabay via `scripts/csv_to_embed.py`.
 - `Orchestrate-Stock.ps1` mendukung parameter `-Platforms` (subset Adobe, Dreamstime, Vecteezy, Pixabay; default semua) untuk pembuatan atau pembuatan ulang selektif paket upload tanpa menyentuh platform lain.
-- `Orchestrate-Stock.ps1` mendukung 4 agensi microstock (Adobe Stock, Dreamstime, Vecteezy, Pixabay) untuk format JPG, SVG, dan EPS dengan direktori upload terpisah, sanitasi FTP Vecteezy, dan validasi kesiapan upload warn-only.
-- `Orchestrate-Stock.ps1` menoleransi kegagalan parsial generator metadata (`exit 1` dengan `OK > 0`) di Tahap 5 JPG dan Tahap 3V Tier-3, menandai status `PARTIAL`, mencatat file gagal ke `failed_05_metadata.txt` / `failed_03_metadata.txt`, dan melanjutkan embed untuk file yang berhasil.
-- Terdapat modul profil platform terisolasi ([`platforms.py`](file:///C:/Side/Microstock/microstock-metadata-generator/src/microstock_metadata/platforms.py)) dan soft-gate kualitas video dengan deteksi vertikal HD.
-- Flag model/property release dan status AI generated terintegrasi ke skema dan CSV output.
-- Pipeline teruji penuh: 121 unit/integration test passed, parser 0 error, dan verifikasi matriks manual 6 kasus lolos.
+- `Orchestrate-Stock.ps1` menoleransi kegagalan parsial generator metadata (`exit 1` dengan `OK > 0`), menandai status `PARTIAL`, mencatat file gagal ke `failed_05_metadata.txt` / `failed_03_metadata.txt`, dan melanjutkan embed untuk file yang berhasil.
 
 ## Active Decisions
+- Mekanisme local model AI LLM dihapus sepenuhnya dari codebase; opsi `--backend local` ditolak dengan exit code 2 (Configuration Error).
+- Parameter `--backend api` dipertahankan sebagai default dan untuk backward compatibility dengan seluruh script runner/orkestrator.
 - Generator metadata API mendukung provider chain terurut: `local-gateway` (OpenCode/local proxy) dicoba terlebih dahulu; jika terkena HTTP 429 atau kegagalan transport, otomatis failover ke `cloudflare` Workers AI.
 - `api_inference.py` memastikan `.env` dimuat sebelum evaluasi `model_env`/`account_env` agar override model dari `.env` segera aktif pada provider pertama.
 - `Orchestrate-Stock.ps1` dan `Process-Batch.ps1` otomatis mendeteksi dan mengoper `--config config.yaml` ke generator metadata.
-- `Orchestrate-Stock.ps1` menyediakan opsi `-Platforms` (default 4 agensi); platform yang tidak dipilih tidak ditulis ulang, tidak divalidasi, tidak dihapus, dan diberi label `(skip - tak dipilih)` pada ringkasan serta `"-"` pada return object.
-- Kombinasi `Target=SVG` dengan `Vecteezy` memunculkan peringatan bahwa vektor Vecteezy membutuhkan format EPS dan melanjutkan tanpa error fatal.
-- `Test-UploadReadiness` hanya dijalankan jika setidaknya salah satu platform Vecteezy atau Pixabay terpilih pada run tersebut.
-- `Orchestrate-Stock.ps1` menoleransi `exit 1` generator metadata jika baris sukses > 0; error fatal (`exit 2/3/4` atau `OK == 0`) tetap memicu `throw`.
-- Daftar metadata gagal ditulis ke `failed_05_metadata.txt` (JPG) dan `failed_03_metadata.txt` (vektor), didahului dengan `Remove-Item -Force` untuk mencegah artefak basi.
-- `Orchestrate-Stock.ps1` menghasilkan 4 direktori kind-pure: `for_vecteezy_photo`, `for_pixabay_photo`, `for_vecteezy_eps`, `for_pixabay_svg`.
-- Kolom `License` CSV Vecteezy selalu literal `"free"` (non-exclusive).
-- Paket Vecteezy disanitasi otomatis tanpa spasi/karakter khusus dan CSV paket ditulis ulang dengan Filename extensionless; file sumber dan agensi lain tidak diubah.
-- Validasi portal pada `Test-UploadReadiness` bersifat warn-only dan menghasilkan laporan `validation_vecteezy_pixabay.txt`.
-- Video input eksklusif untuk backend `api`; kombinasi video + `--backend local` fail-fast exit code 2.
-- Menggunakan `ffmpeg`/`ffprobe` sistem dari PATH tanpa dependensi pip baru.
-- Sampling video menggunakan 6 frame terdistribusi seragam `(i + 0.5) * duration / count`.
-- 3 kolom CSV baru (`media_type`, `video_duration_sec`, `frame_count`) diikuti 3 kolom AI/release (`is_ai_generated`, `needs_model_release`, `needs_property_release`) diletakkan di akhir file untuk backward compatibility.
-- Technical video check menggunakan mekanisme soft-gate (menandai `needs_review`, bukan menolak file secara fatal).
+- Video input eksklusif untuk backend `api`.
 
 ## Open Items / Blockers
 - Konfirmasi open questions portal: verifikasi manual limit 4 portal, format nomor vs nama kategori Adobe, dan kategorisasi Vecteezy sebelum publish live batch.
 - Pengunggahan ke portal Pixabay memerlukan centang manual `AI-generated` dan pengisian tag melalui UI.
 
 ## Recent Entries
+- [2026-11-03 08:55:00 — Remove Local AI Model Backend](file:///C:/Side/Microstock/.memory/2026-11-03/085500-remove-local-ai-model-backend.md)
 - [2026-11-03 05:09:00 — Fix API Trailing SSE Extra Data & Cloudflare Vision Fallback](file:///C:/Side/Microstock/.memory/2026-11-03/050900-fix-api-response-trailing-sse-and-cf-vision.md)
 - [2026-10-28 22:30:00 — Cloudflare Fallback & API Model Configuration](file:///C:/Side/Microstock/.memory/2026-10-28/223000-cloudflare-fallback-and-api-model-configuration.md)
 - [2026-10-28 20:05:30 — Backup Scripts and Documentation to Google Drive](file:///C:/Side/Microstock/.memory/2026-10-28/200530-backup-scripts-docs-google-drive.md)
@@ -51,4 +38,3 @@
 - [2026-10-10 22:48:00 — Vecteezy + Pixabay Upload Directories Implementation](file:///C:/Side/Microstock/.memory/2026-10-10/224800-vecteezy-pixabay-upload-directories.md)
 - [2026-10-09 17:28:00 — Video 4-Platform Optimization Implementation](file:///C:/Side/Microstock/.memory/2026-10-09/172800-video-4platform-optimization.md)
 - [2026-10-09 16:41:00 — Video Metadata Support Implementation](file:///C:/Side/Microstock/.memory/2026-10-09/164100-video-metadata-support.md)
-
