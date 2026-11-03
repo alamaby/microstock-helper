@@ -1,0 +1,56 @@
+# API backend (OpenAI-compatible / Cloudflare).
+# Key itself comes from env MICROSTOCK_API_KEY / MICROSTOCK_CF_API_TOKEN (see .env.example), never YAML.
+backend: api
+media_type: auto  # image | video | auto
+api:
+  endpoint: http://127.0.0.1:20128/v1
+  model: oc/mimo-v2.6-flash-free
+  key_env: MICROSTOCK_API_KEY
+  timeout: 120
+  # Ordered provider chain: tried top-down, failover automatic.
+  # Prioritas 1: Cloudflare Workers AI (native multimodal, tanpa stripping proxy)
+  # Prioritas 2: local-gateway (9router / opencode jika dijalankan)
+  providers:
+    - name: cloudflare
+      endpoint: https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1
+      account_env: MICROSTOCK_CF_ACCOUNT_ID
+      model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+      model_env: MICROSTOCK_CF_MODEL
+      key_env: MICROSTOCK_CF_API_TOKEN
+    - name: local-gateway
+      endpoint: http://127.0.0.1:20128/v1
+      model: oc/mimo-v2.6-flash-free
+      model_env: MICROSTOCK_API_MODEL
+      key_env: MICROSTOCK_API_KEY
+
+image:
+  max_edge: 1536
+  min_pixels: 200704
+  max_pixels: 602112
+
+video:
+  frames: 6
+  max_duration_sec: 30
+  max_edge: 1024
+
+metadata:
+  platform: adobe  # adobe|dreamstime|vecteezy|pixabay|all
+  language: en
+  min_keywords: 25
+  max_keywords: 49
+  title_max_length: 70
+  description_max_length: 200
+
+processing:
+  recursive: true
+  resume: true
+  retry_count: 2
+  store_raw_response: true
+
+output:
+  directory: output
+  json_filename: metadata.json
+  csv_filename: metadata.csv
+  failed_filename: failed_items.json
+  checkpoint_filename: checkpoint.json
+  log_filename: processing.log

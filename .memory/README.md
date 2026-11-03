@@ -1,13 +1,14 @@
 # Project Memory Index
 
 - **Format Version**: 1.0.0
-- **Last Updated**: 2026-11-03 10:30:00 +07:00
+- **Last Updated**: 2026-11-03 15:45:00 +07:00
 
 ## Current State
 - Seluruh fungsionalitas otomasi microstock (utilitas raster, renumbering, upscaler, tracer vektor, vector render/convert, embedder ExifTool/SVG XML, dan orkestrator pipeline multi-platform) telah dikonsolidasikan ke dalam satu paket aplikasi Python terpadu (`microstock-helper` / `microstock`).
 - CLI terpadu dilengkapi startup preflight dependency check yang otomatis memverifikasi keberadaan `exiftool`, `upscayl`, `vtracer`, `inkscape`, `ffmpeg`, `ffprobe`, dan status API token sebelum tugas pipeline dijalankan.
 - Konversi gambar raster (PNG/WebP/TIF/BMP ke JPEG) dioperasikan secara native via Pillow dengan penanganan alpha compositing ke latar putih standar microstock.
 - Mekanisme local AI model (Qwen2.5-VL via PyTorch) telah dihapus dari codebase; kini murni beroperasi menggunakan backend Vision API multi-tier (`local-gateway` OpenAI-compatible dengan failover otomatis ke `cloudflare` Workers AI).
+- Modul discovery metadata otomatis mengecualikan folder pipeline internal (`_stock`, `output-api`, `for_*`) dan `batch` otomatis mendeteksi struktur flat root (`--no-recursive`).
 - Seluruh script PowerShell legacy (`Orchestrate-Stock.ps1`, `Process-Batch.ps1`, `Embed-JpgMetadata.ps1`, dll.) tetap dipertahankan untuk backward compatibility.
 - Seluruh unit tests (25 tests di `tests/` dan 126 tests di `microstock-metadata-generator/tests`) lulus 100%.
 
@@ -19,10 +20,15 @@
 - Generator metadata API mendukung provider chain terurut: `local-gateway` dicoba terlebih dahulu; jika terkena HTTP 429 atau kegagalan transport, otomatis failover ke `cloudflare` Workers AI.
 
 ## Open Items / Blockers
+- Batch `Winter Microstock` di Adobe Stock: 28 file sukses terunggah, 39 file tertahan upload limit (menunggu kuota/slot review terbuka), dan 1 file (`022`) mengalami upload error (perlu re-upload mandiri).
+- Metadata `021`, `022`, dan `023` pada batch `Winter Microstock` tercatat "Flowers blooming..." dan perlu disesuaikan sebelum submit kurasi.
 - Konfirmasi open questions portal: verifikasi manual limit 4 portal, format nomor vs nama kategori Adobe, dan kategorisasi Vecteezy sebelum publish live batch.
 - Pengunggahan ke portal Pixabay memerlukan centang manual `AI-generated` dan pengisian tag melalui UI.
 
 ## Recent Entries
+- [2026-11-03 15:45:00 — Fix Batch Discovery: Prune Pipeline & Output Folders, Auto-Detect Flat Root](file:///C:/Side/Microstock/.memory/2026-11-03/154500-fix-batch-discovery-prune-pipeline-folders.md)
+- [2026-11-03 15:10:00 — Diagnosis: 9Router Stripping Image Payload on Cloudflare Vision Model](file:///C:/Side/Microstock/.memory/2026-11-03/151000-diagnose-9router-image-stripping-cloudflare-vision.md)
+- [2026-11-03 13:30:00 — Winter Microstock Adobe Stock Upload Status & Limit Tracking](file:///C:/Side/Microstock/.memory/2026-11-03/133000-winter-microstock-adobe-upload-tracking.md)
 - [2026-11-03 10:30:00 — Consolidate Microstock Scripts to Unified Python Application](file:///C:/Side/Microstock/.memory/2026-11-03/103000-consolidate-microstock-scripts-to-python.md)
 - [2026-11-03 08:55:00 — Remove Local AI Model Backend](file:///C:/Side/Microstock/.memory/2026-11-03/085500-remove-local-ai-model-backend.md)
 - [2026-11-03 05:09:00 — Fix API Trailing SSE Extra Data & Cloudflare Vision Fallback](file:///C:/Side/Microstock/.memory/2026-11-03/050900-fix-api-response-trailing-sse-and-cf-vision.md)

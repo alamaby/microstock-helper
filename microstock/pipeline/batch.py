@@ -38,6 +38,14 @@ def run_batch(
     from ..metadata.cli import main as meta_main
 
     args = ["generate", str(batch_path), "--output-dir", str(out_api), "--backend", "api"]
+    root_images = [
+        f for f in batch_path.iterdir()
+        if f.is_file() and f.suffix.lower() in (
+            ".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov"
+        )
+    ]
+    if root_images:
+        args.append("--no-recursive")
     if limit and limit > 0:
         args.extend(["--limit", str(limit)])
     if overwrite:

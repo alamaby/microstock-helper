@@ -64,7 +64,14 @@ def discover_inputs(
         raise ConfigurationError(f"Input path does not exist: {input_path}")
     base = os.path.abspath(input_path)
     if recursive:
-        for root, _dirs, files in os.walk(base):
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [
+                d for d in dirs
+                if d.lower() not in (
+                    "_stock", "output-api", "for_adobe", "for_dreamstime",
+                    "for_vecteezy", "for_pixabay", "output"
+                )
+            ]
             for name in sorted(files):
                 full = os.path.join(root, name)
                 if os.path.splitext(name)[1].lower() in allowed:

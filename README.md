@@ -126,14 +126,15 @@ copy .env.example .env
 Sesuaikan kredensial API Vision Anda pada file `.env`:
 
 ```env
-# Local / OpenAI-compatible Vision API Gateway (Primary)
+# Local / OpenAI-compatible Vision API Gateway (Optional)
 MICROSTOCK_API_KEY=kunci_api_vision_anda
-MICROSTOCK_API_BASE_URL=http://localhost:8080/v1
-MICROSTOCK_API_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
+MICROSTOCK_API_ENDPOINT=http://127.0.0.1:20128/v1
+MICROSTOCK_API_MODEL=oc/mimo-v2.6-flash-free
 
-# Cloudflare Workers AI Fallback (Opsional)
-MICROSTOCK_CF_ACCOUNT_ID=
-MICROSTOCK_CF_API_TOKEN=
+# Cloudflare Workers AI (Direct / Fallback)
+MICROSTOCK_CF_ACCOUNT_ID=account_id_cloudflare_anda
+MICROSTOCK_CF_API_TOKEN=api_token_cloudflare_anda
+MICROSTOCK_CF_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
 ```
 
 ---
@@ -220,6 +221,9 @@ run.bat batch "D:\Karya\Batch_01" --agencies adobe --limit 5 --dry-run
 # Menimpa output yang sudah ada sebelumnya
 run.bat batch "D:\Karya\Batch_01" --agencies both --overwrite
 ```
+
+> [!NOTE]
+> Perintah `batch` secara otomatis mendeteksi file media di root folder dan mengabaikan subfolder kerja internal (`_stock`, `output-api`, `for_*`) agar file tidak terproses ganda.
 
 ---
 
