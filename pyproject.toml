@@ -1,6 +1,6 @@
 [project]
 name = "microstock-helper"
-version = "1.0.0"
+version = "0.1.0"
 description = "Unified Microstock automation suite (raster, vector, AI metadata, & orchestration)"
 readme = "README.md"
 requires-python = ">=3.10"
