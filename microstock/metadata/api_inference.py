@@ -28,56 +28,90 @@ DEFAULT_KEY_ENV = "MICROSTOCK_API_KEY"
 
 
 class KeyPool:
-    """Round-robin pool of API keys (comma-separated in one env var).
+    """Round-robin pool of API keys and optional account IDs.
 
-    - next() rotates across healthy keys; logs use 1-based indexes only.
-    - report_bad() quarantines a rejected key (401/403); failover is
-      automatic on the next attempt. All-bad -> InferenceError.
+    - next() rotates across healthy credentials.
+    - report_bad(key, account_id=None) quarantines a rejected key (401/403).
+    - report_quota_exhausted(account_id, key=None) quarantines an exhausted account (429/quota).
     """
 
-    def __init__(self, keys: list[str]):
+    def __init__(self, keys: list[str] | list[tuple[str | None, str]]):
         import threading
         from collections import Counter
 
-        seen: list[str] = []
-        for key in keys or []:
-            key = (key or "").strip().strip("\"'")
-            if key and key not in seen:
-                seen.append(key)
+        seen: list[tuple[str | None, str]] = []
+        has_accounts = False
+        for item in keys or []:
+            if isinstance(item, tuple):
+                acc, key = item
+                acc = (acc or "").strip() or None
+                key = (key or "").strip().strip("\"'")
+                if acc:
+                    has_accounts = True
+                if key and (acc, key) not in seen:
+                    seen.append((acc, key))
+            else:
+                key = (item or "").strip().strip("\"'")
+                if key and (None, key) not in seen:
+                    seen.append((None, key))
         if not seen:
             raise InferenceError(
                 f"API key missing: set {DEFAULT_KEY_ENV} in the environment "
                 "or in a .env file (comma-separated for several keys). "
                 "See .env.example for the shape."
             )
-        self._keys = seen
+        self._items = seen
+        self._keys = [k for _, k in seen]
+        self._has_accounts = has_accounts
         self._bad: set[str] = set()
+        self._exhausted_accounts: set[str] = set()
         self._idx = 0
         self._lock = threading.Lock()
         self._uses: Counter = Counter()
 
     def __len__(self) -> int:
-        return len(self._keys)
+        return len(self._items)
 
-    def next(self) -> tuple[int, str]:
+    def next(self) -> tuple[int, str] | tuple[int, str, str | None]:
         with self._lock:
-            healthy = [k for k in self._keys if k not in self._bad]
+            healthy = [
+                (acc, k) for acc, k in self._items
+                if k not in self._bad and (acc is None or acc not in self._exhausted_accounts)
+            ]
             if not healthy:
+                if self._exhausted_accounts:
+                    raise InferenceError("All API accounts exceeded their quota or were rejected.")
                 raise InferenceError("All API keys were rejected by the provider.")
-            pick = healthy[self._idx % len(healthy)]
+            pick_acc, pick_key = healthy[self._idx % len(healthy)]
             self._idx += 1
-            self._uses[pick] += 1
-            return self._keys.index(pick) + 1, pick
+            self._uses[(pick_acc, pick_key)] += 1
+            pos = self._items.index((pick_acc, pick_key)) + 1
+            if self._has_accounts:
+                return pos, pick_key, pick_acc
+            return pos, pick_key
 
-    def report_bad(self, key: str) -> None:
+    def report_bad(self, key: str, account_id: str | None = None) -> None:
         with self._lock:
             self._bad.add(key)
 
+    def report_quota_exhausted(self, account_id: str | None = None, key: str | None = None) -> None:
+        with self._lock:
+            if account_id:
+                self._exhausted_accounts.add(account_id)
+            elif key:
+                self._bad.add(key)
+
     def stats(self) -> str:
         parts = []
-        for pos, key in enumerate(self._keys, 1):
-            mark = "REJECTED" if key in self._bad else f"x{self._uses.get(key, 0)}"
-            parts.append(f"#{pos}{mark}")
+        for pos, (acc, key) in enumerate(self._items, 1):
+            if key in self._bad:
+                mark = "REJECTED"
+            elif acc and acc in self._exhausted_accounts:
+                mark = "QUOTA_EXHAUSTED"
+            else:
+                mark = f"x{self._uses.get((acc, key), 0)}"
+            acc_label = f"[{acc[:6]}..]" if acc else ""
+            parts.append(f"#{pos}{acc_label}{mark}")
         return " ".join(parts)
 
 
@@ -142,6 +176,80 @@ def resolve_api_key(key_env: str = DEFAULT_KEY_ENV) -> str:
     return keys[0]
 
 
+def resolve_api_credentials(
+    key_env: str = DEFAULT_KEY_ENV,
+    account_env: str = "",
+    accounts_env: str = "",
+) -> list[tuple[str | None, str]]:
+    """Resolve credentials as list of (account_id, api_token) pairs.
+
+    Resolution order:
+    1. accounts_env (or MICROSTOCK_CF_ACCOUNTS / MICROSTOCK_CF_CREDENTIALS):
+       Formatted as comma-separated pairs: 'acc1:tok1,acc2:tok2'
+    2. Parallel environment variables:
+       account_env: 'acc1,acc2'
+       key_env: 'tok1,tok2'
+    3. Single account with comma-separated keys:
+       account_env: 'acc1'
+       key_env: 'tok1,tok2' -> [('acc1', 'tok1'), ('acc1', 'tok2')]
+    4. Key-only (for providers without accounts, e.g. local gateway):
+       key_env: 'tok1,tok2' -> [(None, 'tok1'), (None, 'tok2')]
+    """
+    ensure_dotenv_loaded()
+
+    # 1. Check explicit combined accounts_env or global multi-account env
+    comb_candidates = [accounts_env] if accounts_env else ["MICROSTOCK_CF_ACCOUNTS", "MICROSTOCK_CF_CREDENTIALS"]
+    for env_name in comb_candidates:
+        if env_name and os.environ.get(env_name, "").strip():
+            raw_comb = os.environ[env_name].strip()
+            pairs: list[tuple[str | None, str]] = []
+            for item in raw_comb.split(","):
+                item = item.strip().strip("\"'")
+                if not item:
+                    continue
+                if ":" in item:
+                    acc, tok = item.split(":", 1)
+                    pairs.append((acc.strip(), tok.strip()))
+                else:
+                    pairs.append((None, item.strip()))
+            if pairs:
+                return pairs
+
+    # 2. Check parallel / separate account_env and key_env
+    acc_raw = os.environ.get(account_env, "").strip() if account_env else ""
+    key_raw = os.environ.get(key_env, "").strip()
+    if not key_raw:
+        ensure_dotenv_loaded()
+        key_raw = os.environ.get(key_env, "").strip()
+
+    accounts = [a.strip().strip("\"'") for a in acc_raw.split(",") if a.strip().strip("\"'")]
+    keys = [k.strip().strip("\"'") for k in key_raw.split(",") if k.strip().strip("\"'")]
+
+    if not keys:
+        raise InferenceError(
+            f"API key missing: set {key_env} in the environment or in a .env "
+            "file (comma-separated for several keys). "
+            "See .env.example for the shape."
+        )
+
+    if not accounts:
+        return [(None, k) for k in keys]
+
+    if len(accounts) == 1:
+        return [(accounts[0], k) for k in keys]
+
+    if len(accounts) == len(keys):
+        return list(zip(accounts, keys))
+
+    if len(keys) == 1:
+        return [(acc, keys[0]) for acc in accounts]
+
+    raise InferenceError(
+        f"Mismatched account/key count in {account_env} ({len(accounts)}) "
+        f"and {key_env} ({len(keys)}). Provide equal counts or use 'acc1:tok1,acc2:tok2' format."
+    )
+
+
 def build_providers(api_cfg, timeout: int) -> list:
     """Build the ordered live-provider chain from config.
 
@@ -189,17 +297,24 @@ def build_providers(api_cfg, timeout: int) -> list:
                 if model_env and os.environ.get(model_env, "").strip():
                     model = os.environ[model_env].strip()
             key_env = str(entry.get("key_env") or DEFAULT_KEY_ENV)
+            account_env = str(entry.get("account_env") or "")
+            accounts_env = str(entry.get("accounts_env") or "")
+
             if not endpoint or not model:
                 raise InferenceError(f"provider '{name}': endpoint/model required.")
+
+            credentials = resolve_api_credentials(key_env, account_env, accounts_env)
             if "{account_id}" in endpoint:
-                account_env = str(entry.get("account_env") or "")
-                account_id = os.environ.get(account_env, "") if account_env else ""
-                if not account_id:
+                accounts = [acc for acc, _ in credentials if acc]
+                if not accounts:
                     log.warning("API provider '%s' skipped: %s not set.",
                                 name, account_env or "account_env")
                     continue
-                endpoint = endpoint.replace("{account_id}", account_id)
-            pool = KeyPool(resolve_api_keys(key_env))
+                unique_accounts = list(dict.fromkeys(accounts))
+                if len(unique_accounts) == 1:
+                    endpoint = endpoint.replace("{account_id}", unique_accounts[0])
+
+            pool = KeyPool(credentials)
         except InferenceError as exc:
             log.warning("API provider '%s' skipped: %s", name, exc)
             continue
@@ -302,7 +417,11 @@ def _post_json(url: str, payload: dict, api_key: str, timeout: int) -> dict:
                 f"API rejected the key (HTTP {exc.code}). "
                 "Failing over to the next key. " + detail
             ) from exc
-        if exc.code in (429, 500, 502, 503, 504):
+        if exc.code == 429 or (exc.code == 400 and any(w in detail.lower() for w in ("quota", "exceeded", "daily", "neuron"))):
+            if any(w in detail.lower() for w in ("quota", "exceeded", "daily", "neuron")):
+                raise _QuotaExceededError(f"API daily quota exceeded (HTTP {exc.code}): {detail}") from exc
+            raise _RetryableError(f"HTTP {exc.code}: {detail}") from exc
+        if exc.code in (500, 502, 503, 504):
             raise _RetryableError(f"HTTP {exc.code}: {detail}") from exc
         raise InferenceError(f"API error HTTP {exc.code}: {detail}") from exc
     except TimeoutError as exc:
@@ -313,6 +432,10 @@ def _post_json(url: str, payload: dict, api_key: str, timeout: int) -> dict:
 
 class _RetryableError(InferenceError):
     """Transient transport failure worth one more attempt."""
+
+
+class _QuotaExceededError(InferenceError):
+    """Account quota exhausted (HTTP 429 or daily neurons limit exceeded)."""
 
 
 class _AuthError(InferenceError):
@@ -333,18 +456,28 @@ def generate_once(
     """One generation call (content retries are handled by the caller).
 
     key_pool: KeyPool — round-robin per attempt, automatic failover to
-    the next key on 401/403. Only key indexes are ever logged.
+    the next key on 401/403 or quota exhausted (429). Only key indexes are ever logged.
     """
     import logging
 
     log = logging.getLogger("microstock")
     last: Exception | None = None
-    for attempt in range(transport_retries + 1):
-        key_no, key = key_pool.next()
-        log.debug("API attempt %d with key #%d/%d",
-                  attempt + 1, key_no, len(key_pool))
+    max_attempts = max(transport_retries + 1, len(key_pool))
+    for attempt in range(max_attempts):
+        next_item = key_pool.next()
+        if len(next_item) >= 3:
+            key_no, key, account_id = next_item[0], next_item[1], next_item[2]
+        else:
+            key_no, key, account_id = next_item[0], next_item[1], None
+
+        req_endpoint = endpoint
+        if "{account_id}" in req_endpoint and account_id:
+            req_endpoint = req_endpoint.replace("{account_id}", account_id)
+
+        log.debug("API attempt %d with key #%d/%d (account %s)",
+                  attempt + 1, key_no, len(key_pool), account_id or "default")
         try:
-            data = _post_json(endpoint, _payload(model_name, prompt_text, pil_images,
+            data = _post_json(req_endpoint, _payload(model_name, prompt_text, pil_images,
                               max_tokens, temperature), key, timeout)
             choice = data["choices"][0]
             msg = choice.get("message") or {}
@@ -370,8 +503,14 @@ def generate_once(
                 content = str(content)
             return content.strip()
         except _AuthError as exc:
-            key_pool.report_bad(key)
+            key_pool.report_bad(key, account_id)
             log.warning("API key #%d rejected, failing over: %s", key_no, exc)
+            last = exc
+            continue
+        except _QuotaExceededError as exc:
+            key_pool.report_quota_exhausted(account_id, key)
+            log.warning("API quota exceeded on account %s (key #%d), rotating: %s",
+                        account_id or "default", key_no, exc)
             last = exc
             continue
         except _RetryableError as exc:

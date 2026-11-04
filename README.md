@@ -4,56 +4,56 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen.svg?style=flat-square)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-windows-lightgrey.svg?style=flat-square)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-151%20passed-success.svg?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-33%20passed-success.svg?style=flat-square)](tests/)
 
-Aplikasi otomatisasi alur kerja microstock terpadu berbasis Python (CLI) untuk pemrosesan gambar raster, vektorisasi SVG/EPS, generasi metadata AI via Vision API, serta embedding metadata ke format standar agensi (**Adobe Stock**, **Dreamstime**, **Vecteezy**, dan **Pixabay**).
+A unified Python-based microstock workflow automation CLI for raster image processing, SVG/EPS vectorization, AI metadata generation via Vision API, and metadata embedding compliant with major stock agency standards (**Adobe Stock**, **Dreamstime**, **Vecteezy**, and **Pixabay**).
 
 ---
 
-## Daftar Isi
+## Table of Contents
 
-- [Alur Kerja (Workflow)](#alur-kerja-workflow)
-- [Fitur Utama](#fitur-utama)
-- [Prasyarat & Dependensi Eksternal](#prasyarat--dependensi-eksternal)
-- [Panduan Instalasi Cepat](#panduan-instalasi-cepat)
-- [Diagnosis Kesiapan Sistem](#diagnosis-kesiapan-sistem-doctor)
-- [Panduan Penggunaan CLI](#panduan-penggunaan-cli)
-  - [1. Orkestrator End-to-End (`run`)](#1-orkestrator-end-to-end-run)
+- [Workflow](#workflow)
+- [Key Features](#key-features)
+- [Prerequisites & External Dependencies](#prerequisites--external-dependencies)
+- [Quick Installation Guide](#quick-installation-guide)
+- [System Readiness Diagnostic (`doctor`)](#system-readiness-diagnostic-doctor)
+- [CLI Usage Guide](#cli-usage-guide)
+  - [1. End-to-End Orchestrator (`run`)](#1-end-to-end-orchestrator-run)
   - [2. Batch Processing Metadata & Embed (`batch`)](#2-batch-processing-metadata--embed-batch)
-  - [3. Generasi Metadata AI Mandiri (`generate`)](#3-generasi-metadata-ai-mandiri-generate)
-  - [4. Konversi Raster ke JPG (`convert`)](#4-konversi-raster-ke-jpg-convert)
-  - [5. Penomoran Kronologis (`renumber`)](#5-penomoran-kronologis-renumber)
-  - [6. Upscale Gambar AI (`upscale`)](#6-upscale-gambar-ai-upscale)
-  - [7. Tracing Vektor SVG (`trace`)](#7-tracing-vektor-svg-trace)
-  - [8. Render Preview Vektor (`vector-preview`)](#8-render-preview-vektor-vector-preview)
-  - [9. Konversi SVG ke EPS (`convert-eps`)](#9-konversi-svg-ke-eps-convert-eps)
-  - [10. Embed Metadata Gambar (`embed-jpg`)](#10-embed-metadata-gambar-embed-jpg)
-  - [11. Embed Metadata Paket Vektor (`embed-vector`)](#11-embed-metadata-paket-vektor-embed-vector)
-- [Matriks Format & Ketentuan Agensi](#matriks-format--ketentuan-agensi)
-- [Struktur Output Direktori](#struktur-output-direktori)
-- [Verifikasi & Pengujian](#verifikasi--pengujian)
-- [Lisensi](#lisensi)
+  - [3. Standalone AI Metadata Generation (`generate`)](#3-standalone-ai-metadata-generation-generate)
+  - [4. Raster to JPG Conversion (`convert`)](#4-raster-to-jpg-conversion-convert)
+  - [5. Chronological Renumbering (`renumber`)](#5-chronological-renumbering-renumber)
+  - [6. AI Image Upscaling (`upscale`)](#6-ai-image-upscaling-upscale)
+  - [7. SVG Vector Tracing (`trace`)](#7-svg-vector-tracing-trace)
+  - [8. Vector Preview Rendering (`vector-preview`)](#8-vector-preview-rendering-vector-preview)
+  - [9. SVG to EPS Conversion (`convert-eps`)](#9-svg-to-eps-conversion-convert-eps)
+  - [10. Image Metadata Embedding (`embed-jpg`)](#10-image-metadata-embedding-embed-jpg)
+  - [11. Vector Package Metadata Embedding (`embed-vector`)](#11-vector-package-metadata-embedding-embed-vector)
+- [Agency Requirements & Format Matrix](#agency-requirements--format-matrix)
+- [Output Directory Structure](#output-directory-structure)
+- [Verification & Testing](#verification--testing)
+- [License](#license)
 
 ---
 
-## Alur Kerja (Workflow)
+## Workflow
 
 ```mermaid
 flowchart TD
-    RAW["📁 Media Sumber (PNG / WebP / JPG)"] --> RENUM["001_ Penomoran Kronologis"]
-    RENUM --> SMALL["Konversi JPG Kecil (Preview)"]
-    SMALL --> VISION["🤖 AI Vision API (OpenAI-compatible / Cloudflare)"]
-    VISION --> CSV["Master CSV & 4 Template Agensi"]
+    RAW["📁 Source Media (PNG / WebP / JPG)"] --> RENUM["001_ Chronological Renumbering"]
+    RENUM --> SMALL["Downsample Small JPG (Preview)"]
+    SMALL --> VISION["🤖 AI Vision API (Cloudflare / OpenAI-compatible)"]
+    VISION --> CSV["Master CSV & 4 Agency Templates"]
     
     SMALL --> BRANCH{"Target Format"}
     
-    BRANCH -- "JPG" --> UPSCALE["Upscayl CLI (Upscale 5x)"]
-    UPSCALE --> FINAL_JPG["JPG Kualitas Maksimum"]
+    BRANCH -- "JPG" --> UPSCALE["Upscayl CLI (5x Upscale)"]
+    UPSCALE --> FINAL_JPG["Maximum Quality Final JPG"]
     FINAL_JPG --> EMBED_JPG["ExifTool Triple-Sync Embed"]
     
     BRANCH -- "SVG" --> TRACE["vtracer CLI (Raster to SVG)"]
-    TRACE --> PREVIEW["Inkscape CLI (Render Preview 6000px)"]
-    PREVIEW --> EMBED_SVG["Injeksi XML Dublin Core & ExifTool"]
+    TRACE --> PREVIEW["Inkscape CLI (6000px Preview Render)"]
+    PREVIEW --> EMBED_SVG["Dublin Core XML & ExifTool Injection"]
     
     BRANCH -- "EPS" --> TRACE_EPS["vtracer CLI (Raster to SVG)"]
     TRACE_EPS --> CONV_EPS["Inkscape CLI (SVG to EPS)"]
@@ -63,39 +63,39 @@ flowchart TD
     CSV -.-> EMBED_SVG
     CSV -.-> EMBED_EPS
     
-    EMBED_JPG --> PKG["📦 Paket Siap Upload (for_adobe, for_dreamstime, for_vecteezy, for_pixabay)"]
+    EMBED_JPG --> PKG["📦 Upload-Ready Packages (for_adobe, for_dreamstime, for_vecteezy, for_pixabay)"]
     EMBED_SVG --> PKG
     EMBED_EPS --> PKG
 ```
 
 ---
 
-## Fitur Utama
+## Key Features
 
-- 🔍 **Startup Preflight Check**: Pemeriksaan dependensi otomatis saat aplikasi dijalankan; mendeteksi ketersediaan seluruh tool CLI eksternal dan API key sebelum pipeline dieksekusi.
-- ⚡ **Pillow Native Processing**: Konversi format raster murni (PNG, WebP, TIF, BMP ke JPEG) tanpa proses eksternal berat, lengkap dengan compositing transparansi (alpha) ke latar belakang putih standar industri stock.
-- 🧠 **AI Vision Metadata Multi-Tier**: Menghasilkan judul, deskripsi, kata kunci (phrase & single-word), serta kategori resmi agensi menggunakan gateway Vision API lokal dengan failover otomatis ke Cloudflare Workers AI.
-- 🔄 **Orkestrator End-to-End & Resume Cerdas**: Alur terpadu multi-tahap (0–7) dengan deteksi file korup/interupsi dan kemampuan me-reuse tahapan yang sudah selesai tanpa memanggil ulang API.
-- 🛡️ **Bypass Limit MAX_PATH 260 Karakter**: Proteksi cerdas saat menjalankan Upscayl CLI via sandboxing nama pendek di direktori `%TEMP%`.
-- 🏷️ **Triple-Sync ExifTool 2-Phase**: Injeksi metadata bersih (fase reset lalu fase tulis UTF-8) ke IPTC, XMP, dan EXIF untuk memastikan terbaca akurat oleh seluruh portal agensi.
+- 🔍 **Startup Preflight Check**: Automatic dependency validation on launch; verifies availability of all external CLI binaries and API keys before executing any pipeline tasks.
+- ⚡ **Native Pillow Processing**: Pure Python raster format conversions (PNG, WebP, TIF, BMP to JPEG) without heavy external subprocess overhead, including alpha compositing onto standard stock-photo solid white backgrounds.
+- 🧠 **Multi-Tier Vision Metadata AI with Auto-Rotation**: Generates compliant titles, descriptions, keywords (phrases & single-words), and agency categories. Supports Cloudflare Workers AI with multi-account/multi-token round-robin rotation, dynamic endpoint formatting, quota circuit breakers (HTTP 429), and fallback to local OpenAI-compatible gateways.
+- 🔄 **End-to-End Orchestrator & Smart Resume**: Multi-stage pipeline (Stages 0–7) with per-item idempotency and atomic checkpointing (`checkpoint.json`), allowing seamless resumption without re-invoking the Vision API or re-processing completed files.
+- 🛡️ **Windows MAX_PATH (260 Characters) Bypass**: Safe Upscayl CLI execution via sandboxed short paths in `%TEMP%` to prevent path-length errors.
+- 🏷️ **Two-Phase Triple-Sync ExifTool**: Clean metadata injection (reset phase followed by clean UTF-8 write phase) across IPTC, XMP, and EXIF to prevent tag duplication and ensure 100% readability across all agency portals.
 
 ---
 
-## Prasyarat & Dependensi Eksternal
+## Prerequisites & External Dependencies
 
-Aplikasi berjalan di lingkungan **Windows** dan memanfaatkan beberapa CLI pendukung:
+The application runs in a **Windows** environment and utilizes the following CLI tools:
 
-| Tool CLI | Fungsi Utama | Jalur Pencarian Default |
+| CLI Tool | Primary Function | Default Search Paths |
 |---|---|---|
-| **Python** (>= 3.10) | Runtime aplikasi & operasi raster Pillow | System `PATH` |
-| **ExifTool** | Embed metadata JPG, PNG, dan PostScript EPS | `C:\Apps\exiftool\exiftool.exe` atau `PATH` |
-| **Upscayl CLI** | AI Image Upscaling (model `upscayl-standard-4x`) | `C:\Program Files\Upscayl\resources\bin\upscayl-bin.exe` |
-| **vtracer CLI** | Konversi raster JPG ke kurva vektor SVG | `C:\Apps\vtracer.exe` atau `PATH` |
-| **Inkscape CLI** | Render preview JPG 6000px & konversi SVG ke EPS | `C:\Program Files\Inkscape\bin\inkscape.com` atau `PATH` |
-| **ffmpeg / ffprobe** | Utility pendukung video & audio frame extraction | `C:\ProgramData\chocolatey\bin\ffmpeg.exe` atau `PATH` |
+| **Python** (>= 3.10) | Core application runtime & Pillow raster ops | System `PATH` |
+| **ExifTool** | Metadata embedding for JPG, PNG, and PostScript EPS | `C:\Apps\exiftool\exiftool.exe` or `PATH` |
+| **Upscayl CLI** | AI Image Upscaling (`upscayl-standard-4x` model) | `C:\Program Files\Upscayl\resources\bin\upscayl-bin.exe` |
+| **vtracer CLI** | Raster JPG to SVG spline curve tracing | `C:\Apps\vtracer.exe` or `PATH` |
+| **Inkscape CLI** | 6000px JPG preview rendering & SVG to EPS conversion | `C:\Program Files\Inkscape\bin\inkscape.com` or `PATH` |
+| **ffmpeg / ffprobe** | Video frame extraction & media stream probing | `C:\ProgramData\chocolatey\bin\ffmpeg.exe` or `PATH` |
 
 > [!NOTE]
-> Jika salah satu tool terpasang di direktori non-standar, Anda dapat mengesampingkan lokasinya melalui environment variable:
+> If any tool is installed in a non-standard directory, you can override its path via environment variables:
 > - `MICROSTOCK_EXIFTOOL_PATH`
 > - `MICROSTOCK_UPSCAYL_PATH`
 > - `MICROSTOCK_VTRACER_PATH`
@@ -105,49 +105,59 @@ Aplikasi berjalan di lingkungan **Windows** dan memanfaatkan beberapa CLI penduk
 
 ---
 
-## Panduan Instalasi Cepat
+## Quick Installation Guide
 
-### 1. Setup Virtual Environment Otomatis
+### 1. Automated Setup
 
-Jalankan script setup 1-klik di root direktori untuk menginisialisasi virtual environment dan dependensi Python:
+Run the one-click setup script in the root directory to create the virtual environment and install all Python dependencies:
 
 ```cmd
 setup.bat
 ```
 
-### 2. Konfigurasi Token API
+### 2. Configure API Credentials
 
-Salin template lingkungan ke `.env` di root repository:
+Copy the environment template to `.env` in the root repository:
 
 ```cmd
 copy .env.example .env
 ```
 
-Sesuaikan kredensial API Vision Anda pada file `.env`:
+Configure your Vision API credentials in `.env`:
 
 ```env
-# Local / OpenAI-compatible Vision API Gateway (Optional)
-MICROSTOCK_API_KEY=kunci_api_vision_anda
+# ------------------------------------------------------------------------------
+# Primary Provider: Cloudflare Workers AI (Multi-Account / Key Rotation)
+# ------------------------------------------------------------------------------
+# Option A: Single Account
+MICROSTOCK_CF_ACCOUNT_ID=your_cloudflare_account_id_here
+MICROSTOCK_CF_API_TOKEN=your_cloudflare_api_token_here
+
+# Option B: Multi-Account Credential Pairs (Auto-rotation & Quota Circuit Breaker)
+# MICROSTOCK_CF_ACCOUNTS=account_id_1:api_token_1,account_id_2:api_token_2
+
+# Model Vision (Default: @cf/meta/llama-4-scout-17b-16e-instruct)
+MICROSTOCK_CF_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
+
+# ------------------------------------------------------------------------------
+# Secondary Provider: Local Gateway / OpenCode (Fallback)
+# ------------------------------------------------------------------------------
+MICROSTOCK_API_KEY=your_api_key_here
 MICROSTOCK_API_ENDPOINT=http://127.0.0.1:20128/v1
 MICROSTOCK_API_MODEL=oc/mimo-v2.6-flash-free
-
-# Cloudflare Workers AI (Direct / Fallback)
-MICROSTOCK_CF_ACCOUNT_ID=account_id_cloudflare_anda
-MICROSTOCK_CF_API_TOKEN=api_token_cloudflare_anda
-MICROSTOCK_CF_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
 ```
 
 ---
 
-## Diagnosis Kesiapan Sistem (`doctor`)
+## System Readiness Diagnostic (`doctor`)
 
-Jalankan tool diagnosis untuk memastikan seluruh dependensi Python, binary CLI, dan API token telah terdeteksi:
+Run the diagnostic tool to verify all Python dependencies, CLI binaries, and API configurations:
 
 ```cmd
 run.bat doctor
 ```
 
-Contoh output kesiapan sistem:
+Example diagnostic output:
 
 ```text
 ============================================================
@@ -167,239 +177,240 @@ Contoh output kesiapan sistem:
   ffprobe                  : OK  C:\ProgramData\chocolatey\bin\ffprobe.exe
 
   [API Key Configuration]
-  Local Gateway (Primary)  : OK configured
-  Cloudflare AI (Fallback) : OK configured
+  Cloudflare AI (Primary)  : OK configured
+  Local Gateway (Fallback) : OK configured
 ============================================================
 ```
 
 ---
 
-## Panduan Penggunaan CLI
+## CLI Usage Guide
 
-Seluruh perintah dapat dijalankan melalui launcher `run.bat` di root:
+All commands can be invoked through the `run.bat` launcher in the project root:
 
-### 1. Orkestrator End-to-End (`run`)
+### 1. End-to-End Orchestrator (`run`)
 
-Menjalankan alur penuh dari raw images hingga pemisahan paket agensi siap upload:
+Executes the complete workflow from raw images to upload-ready agency packages:
 
 ```cmd
-# Jalur Foto / Raster (JPG) dengan skala upscale 5x
-run.bat run "D:\Karya\Batch_01" --target JPG --scale 5
+# Photo / Raster pipeline (JPG) with 5x AI upscale
+run.bat run "D:\Stock\Batch_01" --target JPG --scale 5
 
-# Jalur Vektor SVG (Adobe, Dreamstime, Pixabay)
-run.bat run "D:\Karya\Batch_Vektor" --target SVG
+# SVG Vector pipeline (Adobe Stock, Dreamstime, Pixabay)
+run.bat run "D:\Stock\Batch_Vector" --target SVG
 
-# Jalur Vektor EPS + Preview JPG (Adobe, Dreamstime, Vecteezy, Pixabay)
-run.bat run "D:\Karya\Batch_Vektor" --target EPS --preview-width 6000
+# EPS Vector + JPG Preview pipeline (Adobe Stock, Dreamstime, Vecteezy, Pixabay)
+run.bat run "D:\Stock\Batch_Vector" --target EPS --preview-width 6000
 
-# Menentukan subset agensi target tertentu:
-run.bat run "D:\Karya\Batch_01" --target JPG --platforms Adobe,Dreamstime
+# Specify target agency subset:
+run.bat run "D:\Stock\Batch_01" --target JPG --platforms Adobe,Dreamstime
 
-# Menyesuaikan nama Creator & Copyright notice:
-run.bat run "D:\Karya\Batch_01" --target JPG --copyright "alamaby" --creator "alamaby"
+# Customize Creator name & Copyright notice:
+run.bat run "D:\Stock\Batch_01" --target JPG --copyright "alamaby" --creator "alamaby"
 
-# Force rebuild (memproses ulang seluruh tahap hulu dari awal, abaikan resume):
-run.bat run "D:\Karya\Batch_01" --target JPG --force
+# Force rebuild (re-process all stages from scratch, ignoring resume checkpoints):
+run.bat run "D:\Stock\Batch_01" --target JPG --force
 ```
 
 > [!TIP]
-> **Fitur Resume Otomatis**: Jika sebuah folder batch sebelumnya telah selesai diproses untuk target JPG, Anda dapat melanjutkan target vektor (SVG atau EPS) pada folder yang sama **tanpa** menyertakan `--force`. Pipeline secara cerdas akan melewati tahap convert & metadata AI (me-reuse CSV yang sudah ada tanpa memanggil API kembali) dan hanya memproses tracing/preview vektor.
+> **Automatic Resume**: If a batch directory has previously completed JPG processing, you can run the vector target (SVG or EPS) on the same folder **without** `--force`. The pipeline will intelligently skip the downsample & metadata AI stages (reusing existing CSVs without re-calling the API) and execute only the vector tracing and rendering steps.
 
 ---
 
 ### 2. Batch Processing Metadata & Embed (`batch`)
 
-Menjalankan alur 3 langkah standar: generate metadata AI -> convert CSV template -> embed metadata ke folder agensi:
+Runs the standard 3-step workflow: generate AI metadata -> convert agency CSVs -> embed metadata into target folders:
 
 ```cmd
-# Memproses batch untuk Adobe Stock dan Dreamstime sekaligus
-run.bat batch "D:\Karya\Batch_01" --agencies both
+# Process batch for both Adobe Stock and Dreamstime
+run.bat batch "D:\Stock\Batch_01" --agencies both
 
-# Uji coba tanpa menulis file akhir (Dry Run) dengan limit 5 item
-run.bat batch "D:\Karya\Batch_01" --agencies adobe --limit 5 --dry-run
+# Dry run test without modifying or copying files (limit 5 items)
+run.bat batch "D:\Stock\Batch_01" --agencies adobe --limit 5 --dry-run
 
-# Menimpa output yang sudah ada sebelumnya
-run.bat batch "D:\Karya\Batch_01" --agencies both --overwrite
+# Overwrite existing outputs
+run.bat batch "D:\Stock\Batch_01" --agencies both --overwrite
 ```
 
 > [!NOTE]
-> Perintah `batch` secara otomatis mendeteksi file media di root folder dan mengabaikan subfolder kerja internal (`_stock`, `output-api`, `for_*`) agar file tidak terproses ganda.
+> The `batch` command automatically detects files in the root directory and ignores internal pipeline folders (`_stock`, `output-api`, `for_*`) to avoid duplicate processing.
 
 ---
 
-### 3. Generasi Metadata AI Mandiri (`generate`)
+### 3. Standalone AI Metadata Generation (`generate`)
 
-Menjalankan inferensi AI Vision murni untuk menghasilkan master metadata CSV tanpa alur orkestrator:
+Runs pure AI Vision inference to generate master metadata CSV/JSON files without the full pipeline:
 
 ```cmd
-# Generasi metadata untuk seluruh media (gambar / klip video) di direktori
-run.bat generate "D:\Karya\Batch_01" --output-dir "D:\Karya\Metadata"
+# Generate metadata for all media (images / video clips) in directory
+run.bat generate "D:\Stock\Batch_01" --output-dir "D:\Stock\Metadata"
 
-# Membatasi jumlah item dan menimpa metadata yang sudah ada
-run.bat generate "D:\Karya\Batch_01" --output-dir "D:\Karya\Metadata" --limit 10 --overwrite
+# Limit item count and overwrite existing metadata
+run.bat generate "D:\Stock\Batch_01" --output-dir "D:\Stock\Metadata" --limit 10 --overwrite
 ```
 
 ---
 
-### 4. Konversi Raster ke JPG (`convert`)
+### 4. Raster to JPG Conversion (`convert`)
 
-Mengonversi PNG/WebP/BMP/TIF ke JPEG kualitas tinggi dengan alpha compositing latar belakang putih:
+Converts PNG/WebP/BMP/TIF images to high-quality JPEG with white background alpha compositing:
 
 ```cmd
-# Konversi standar kualitas 95
-run.bat convert "D:\Karya\RawPNG" --out "D:\Karya\JPG" --quality 95
+# Standard conversion at quality 95
+run.bat convert "D:\Stock\RawPNG" --out "D:\Stock\JPG" --quality 95
 
-# Downsampling sisi terpanjang ke 1000px (untuk keperluan preview / small)
-run.bat convert "D:\Karya\RawPNG" --out "D:\Karya\JPG_Small" --max-edge 1000
+# Downsample longest edge to 1000px (for preview or small images)
+run.bat convert "D:\Stock\RawPNG" --out "D:\Stock\JPG_Small" --max-edge 1000
 
-# Menimpa file JPG yang sudah ada di folder tujuan
-run.bat convert "D:\Karya\RawPNG" --out "D:\Karya\JPG" --overwrite
+# Overwrite existing JPG files in destination
+run.bat convert "D:\Stock\RawPNG" --out "D:\Stock\JPG" --overwrite
 ```
 
 ---
 
-### 5. Penomoran Kronologis (`renumber`)
+### 5. Chronological Renumbering (`renumber`)
 
-Mengurutkan file media berdasarkan tanggal pembuatan file lalu memberikan awalan urut `001_...`:
+Sorts media files by file creation timestamp and adds standardized `001_...` prefixes:
 
 ```cmd
-# Cek pratinjau rencana rename tanpa mengubah file (Dry Run)
-run.bat renumber "D:\Karya\Batch_01" --dry-run
+# Preview planned renames without modifying files (Dry Run)
+run.bat renumber "D:\Stock\Batch_01" --dry-run
 
-# Eksekusi rename kronologis
-run.bat renumber "D:\Karya\Batch_01"
+# Execute chronological rename
+run.bat renumber "D:\Stock\Batch_01"
 ```
 
 ---
 
-### 6. Upscale Gambar AI (`upscale`)
+### 6. AI Image Upscaling (`upscale`)
 
-Melakukan upscaling gambar secara batch via Upscayl CLI (aman dari batas MAX_PATH 260 karakter):
+Performs batch AI image upscaling via Upscayl CLI (safe from MAX_PATH limitations):
 
 ```cmd
-# Upscale 5x (default skala rekomendasi microstock)
-run.bat upscale "D:\Karya\JPG_Small" --out "D:\Karya\Upscaled" --scale 5
+# Upscale 5x (recommended standard for microstock submissions)
+run.bat upscale "D:\Stock\JPG_Small" --out "D:\Stock\Upscaled" --scale 5
 
-# Upscale 4x dan timpa hasil yang sudah ada
-run.bat upscale "D:\Karya\JPG_Small" --out "D:\Karya\Upscaled" --scale 4 --overwrite
+# Upscale 4x and overwrite existing files
+run.bat upscale "D:\Stock\JPG_Small" --out "D:\Stock\Upscaled" --scale 4 --overwrite
 ```
 
 ---
 
-### 7. Tracing Vektor SVG (`trace`)
+### 7. SVG Vector Tracing (`trace`)
 
-Melakukan tracing kurva spline otomatis via vtracer CLI:
+Converts raster images to vector SVG via vtracer CLI spline curve tracing:
 
 ```cmd
-run.bat trace "D:\Karya\JPG_Small" --out "D:\Karya\SVG"
-# Timpa file SVG yang sudah ada
-run.bat trace "D:\Karya\JPG_Small" --out "D:\Karya\SVG" --overwrite
+run.bat trace "D:\Stock\JPG_Small" --out "D:\Stock\SVG"
+
+# Overwrite existing SVG files
+run.bat trace "D:\Stock\JPG_Small" --out "D:\Stock\SVG" --overwrite
 ```
 
 ---
 
-### 8. Render Preview Vektor (`vector-preview`)
+### 8. Vector Preview Rendering (`vector-preview`)
 
-Merender SVG menjadi file gambar JPG beresolusi tinggi (default 6000px):
+Renders high-resolution JPG preview images from SVG files (default 6000px width):
 
 ```cmd
-run.bat vector-preview "D:\Karya\SVG" --out "D:\Karya\Previews" --width 6000
+run.bat vector-preview "D:\Stock\SVG" --out "D:\Stock\Previews" --width 6000
 ```
 
 ---
 
-### 9. Konversi SVG ke EPS (`convert-eps`)
+### 9. SVG to EPS Conversion (`convert-eps`)
 
-Mengonversi file SVG ke format PostScript EPS via Inkscape CLI:
+Converts SVG files to PostScript EPS format via Inkscape CLI:
 
 ```cmd
-run.bat convert-eps "D:\Karya\SVG" --out "D:\Karya\EPS"
+run.bat convert-eps "D:\Stock\SVG" --out "D:\Stock\EPS"
 ```
 
 ---
 
-### 10. Embed Metadata Gambar (`embed-jpg`)
+### 10. Image Metadata Embedding (`embed-jpg`)
 
-Menyuntikkan judul, deskripsi, dan kata kunci dari CSV ke file gambar via ExifTool (triple-sync IPTC+XMP+EXIF):
+Injects titles, descriptions, and keywords from a CSV into image files via ExifTool (triple-sync IPTC+XMP+EXIF):
 
 ```cmd
-# Embed dan salin ke folder output baru
-run.bat embed-jpg --csv "D:\Karya\metadata.csv" --images "D:\Karya\JPG" --out "D:\Karya\for_adobe"
+# Embed and copy to a new output agency directory
+run.bat embed-jpg --csv "D:\Stock\metadata.csv" --images "D:\Stock\JPG" --out "D:\Stock\for_adobe"
 
-# Embed langsung di tempat (in-place) pada folder gambar sumber
-run.bat embed-jpg --csv "D:\Karya\metadata.csv" --images "D:\Karya\JPG"
+# In-place embedding directly inside the source image folder
+run.bat embed-jpg --csv "D:\Stock\metadata.csv" --images "D:\Stock\JPG"
 ```
 
 ---
 
-### 11. Embed Metadata Paket Vektor (`embed-vector`)
+### 11. Vector Package Metadata Embedding (`embed-vector`)
 
-Menyuntikkan metadata ke pasangan file vektor (SVG/EPS) dan preview JPG pendamping:
+Injects metadata into vector file pairs (SVG/EPS) and companion JPG preview images:
 
 ```cmd
-# Paket EPS (untuk Adobe Stock, Dreamstime, Vecteezy)
-run.bat embed-vector --csv "D:\Karya\metadata.csv" --jpg-dir "D:\Karya\Previews" --vec-dir "D:\Karya\EPS" --out "D:\Karya\for_adobe_eps"
+# EPS Package (for Adobe Stock, Dreamstime, Vecteezy)
+run.bat embed-vector --csv "D:\Stock\metadata.csv" --jpg-dir "D:\Stock\Previews" --vec-dir "D:\Stock\EPS" --out "D:\Stock\for_adobe_eps"
 
-# Paket SVG (untuk Adobe Stock, Dreamstime, Pixabay)
-run.bat embed-vector --csv "D:\Karya\metadata.csv" --jpg-dir "D:\Karya\Previews" --vec-dir "D:\Karya\SVG" --out "D:\Karya\for_adobe_svg"
+# SVG Package (for Adobe Stock, Dreamstime, Pixabay)
+run.bat embed-vector --csv "D:\Stock\metadata.csv" --jpg-dir "D:\Stock\Previews" --vec-dir "D:\Stock\SVG" --out "D:\Stock\for_adobe_svg"
 ```
 
 ---
 
-## Matriks Format & Ketentuan Agensi
+## Agency Requirements & Format Matrix
 
-| Agensi | Format Diterima | Ketentuan Judul | Format Kata Kunci | Folder Output Paket |
+| Agency | Accepted Formats | Title Limits | Keyword Formats | Package Output Folders |
 |---|---|---|---|---|
-| **Adobe Stock** | JPG, SVG, EPS + JPG | ≤ 70 karakter | Frasa multi-kata, maks 49 kata kunci | `for_adobe/`, `for_adobe_svg/`, `for_adobe_eps/` |
-| **Dreamstime** | JPG, SVG + JPG, EPS + JPG | ≤ 200 karakter | Kata tunggal lowercase, maks 70–80 kata | `for_dreamstime/`, `for_dreamstime_svg/`, `for_dreamstime_eps/` |
-| **Vecteezy** | JPG (Photo), EPS + JPG | ≤ 70 karakter | Frasa/kata, 5–50 kata kunci, nama file sanitasi FTP | `for_vecteezy_photo/`, `for_vecteezy_eps/` |
-| **Pixabay** | JPG, SVG + JPG | ≤ 100 karakter | Frasa/kata, 5–25 kata kunci | `for_pixabay_photo/`, `for_pixabay_svg/` |
+| **Adobe Stock** | JPG, SVG, EPS + JPG | ≤ 70 characters | Multi-word phrases, max 49 keywords | `for_adobe/`, `for_adobe_svg/`, `for_adobe_eps/` |
+| **Dreamstime** | JPG, SVG + JPG, EPS + JPG | ≤ 200 characters | Single-word lowercase, max 70–80 words | `for_dreamstime/`, `for_dreamstime_svg/`, `for_dreamstime_eps/` |
+| **Vecteezy** | JPG (Photo), EPS + JPG | ≤ 70 characters | Phrases/words, 5–50 keywords, sanitized filenames | `for_vecteezy_photo/`, `for_vecteezy_eps/` |
+| **Pixabay** | JPG, SVG + JPG | ≤ 100 characters | Phrases/words, 5–25 keywords | `for_pixabay_photo/`, `for_pixabay_svg/` |
 
 > [!NOTE]
-> Khusus untuk Vecteezy, nama file disanitasi secara otomatis (menghapus spasi dan simbol khusus) untuk memenuhi standar validasi server upload FTP Vecteezy.
+> For Vecteezy, filenames are automatically sanitized (removing spaces and special punctuation) to meet strict Vecteezy FTP upload server validation rules.
 
 ---
 
-## Struktur Output Direktori
+## Output Directory Structure
 
-Saat pipeline `run` dieksekusi, struktur folder kerja terisolasi dibuat di dalam direktori target:
+When running the `run` orchestrator, an isolated workspace layout is generated inside the target directory:
 
 ```text
 <SourceDir>/
-├── 001_gambar.png                  # File asli (nama diurutkan chronologically)
-└── _stock/                         # Folder kerja & paket siap upload
-    ├── 01_raw/                     # Salinan cadangan file sumber asli
-    ├── 02_jpg_small/               # JPG resolusi rendah untuk inferensi AI & tracing
-    ├── 03_metadata/                # Master CSV & 4 template agensi terpisah
-    ├── 04_upscaled/                # Hasil upscale AI (jalur JPG)
-    ├── 05_final_jpg/               # JPG final resolusi maksimum
-    ├── 05_svg/                     # File vektor SVG (jalur SVG/EPS)
-    ├── 05_preview_jpg/             # Preview render 6000px
-    ├── 06_eps/                     # PostScript EPS (jalur EPS)
-    ├── for_adobe/                  # Paket final siap upload Adobe Stock (JPG)
-    ├── for_dreamstime/             # Paket final siap upload Dreamstime (JPG)
-    ├── for_vecteezy_photo/         # Paket foto ter-sanitasi FTP untuk Vecteezy
-    └── for_pixabay_photo/          # Paket foto siap upload Pixabay
+├── 001_image.png                   # Source media (renamed chronologically)
+└── _stock/                         # Internal workspace & ready packages
+    ├── 01_raw/                     # Backup copies of original source files
+    ├── 02_jpg_small/               # Downsampled JPGs for AI inference & vector tracing
+    ├── 03_metadata/                # Master CSV & 4 platform-specific template CSVs
+    ├── 04_upscaled/                # AI upscale output PNGs (JPG pipeline)
+    ├── 05_final_jpg/               # Maximum quality final JPG files
+    ├── 05_svg/                     # Traced vector SVG files (SVG/EPS pipeline)
+    ├── 05_preview_jpg/             # 6000px rendered vector previews
+    ├── 06_eps/                     # Converted PostScript EPS files (EPS pipeline)
+    ├── for_adobe/                  # Final upload-ready Adobe Stock package (JPG)
+    ├── for_dreamstime/             # Final upload-ready Dreamstime package (JPG)
+    ├── for_vecteezy_photo/         # Sanitized upload-ready Vecteezy package
+    └── for_pixabay_photo/          # Final upload-ready Pixabay package
 ```
 
 ---
 
-## Verifikasi & Pengujian
+## Verification & Testing
 
-Seluruh rangkaian unit tests dan integration tests dapat dijalankan menggunakan `pytest`:
+Unit tests and integration test suites can be executed via `pytest`:
 
 ```cmd
-.\microstock-metadata-generator\.venv\Scripts\pytest.exe -v tests
+pytest tests -v
 ```
 
-Untuk menjalankan pengujian modul generator metadata:
+To run the metadata generator test suite:
 
 ```cmd
-.\microstock-metadata-generator\.venv\Scripts\pytest.exe -v microstock-metadata-generator\tests
+pytest microstock-metadata-generator\tests -v
 ```
 
 ---
 
-## Lisensi
+## License
 
-Proyek ini dilisensikan di bawah lisensi [MIT](LICENSE).
+This project is licensed under the [MIT License](LICENSE).
