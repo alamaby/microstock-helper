@@ -48,7 +48,13 @@ def convert_svg_to_eps(
         f"--export-filename={temp_eps}",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if result.returncode != 0 or not is_valid_eps(temp_eps):
         err_msg = result.stderr.strip() or result.stdout.strip()
         if os.path.isfile(temp_eps):
@@ -92,7 +98,13 @@ def render_svg_preview(
             f"--export-filename={temp_png}",
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         if result.returncode != 0 or not os.path.isfile(temp_png):
             err_msg = result.stderr.strip() or result.stdout.strip()
             raise RuntimeError(f"Inkscape preview render failed for {svg_path}: {err_msg}")

@@ -4,6 +4,9 @@ setlocal
 
 cd /d "%~dp0"
 
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+
 set "VENV_PY=.venv\Scripts\python.exe"
 if not exist "%VENV_PY%" (
   set "VENV_PY=microstock-metadata-generator\.venv\Scripts\python.exe"

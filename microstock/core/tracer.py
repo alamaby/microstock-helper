@@ -48,7 +48,13 @@ def trace_image_to_svg(
         "--mode", "spline",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if result.returncode != 0 or not is_valid_svg(temp_out):
         err_msg = result.stderr.strip() or result.stdout.strip()
         if os.path.isfile(temp_out):

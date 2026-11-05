@@ -71,7 +71,13 @@ def upscale_image(
         if gpu and gpu != "auto":
             cmd.extend(["-g", str(gpu)])
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         if result.returncode != 0 or not os.path.isfile(short_out):
             err_msg = result.stderr.strip() or result.stdout.strip()
             raise RuntimeError(f"Upscayl failed (exit code {result.returncode}): {err_msg}")

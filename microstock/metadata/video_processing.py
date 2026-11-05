@@ -46,6 +46,8 @@ def probe_video(path: str) -> dict[str, Any]:
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
+            encoding="utf-8",
+            errors="replace",
         )
     except FileNotFoundError as exc:
         raise ImageReadError(
@@ -182,6 +184,8 @@ def extract_frames(
                     stderr=subprocess.PIPE,
                     text=True,
                     timeout=60,
+                    encoding="utf-8",
+                    errors="replace",
                 )
             except FileNotFoundError as exc:
                 raise ImageReadError(
