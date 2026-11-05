@@ -77,3 +77,41 @@ def test_batch_convert_to_jpg(tmp_path):
     assert (dest_dir / "img1.jpg").exists()
     assert (dest_dir / "img2.jpg").exists()
     assert not (dest_dir / "ignore.jpg").exists()
+
+
+def test_safe_replace(tmp_path):
+    from microstock.core.image_ops import safe_replace
+
+    src = tmp_path / "src.txt"
+    dst = tmp_path / "dst.txt"
+    src.write_text("new content")
+    dst.write_text("old content")
+
+    safe_replace(str(src), str(dst))
+    assert dst.read_text() == "new content"
+    assert not src.exists()
+
+
+def test_safe_replace_retry(tmp_path, monkeypatch):
+    from microstock.core.image_ops import safe_replace
+    import os
+
+    src = tmp_path / "src.txt"
+    dst = tmp_path / "dst.txt"
+    src.write_text("retried content")
+    dst.write_text("original content")
+
+    real_replace = os.replace
+    attempts = [0]
+
+    def mock_replace(s, d):
+        attempts[0] += 1
+        if attempts[0] < 3:
+            raise PermissionError(5, "Access is denied (simulated lock)")
+        return real_replace(s, d)
+
+    monkeypatch.setattr(os, "replace", mock_replace)
+    safe_replace(str(src), str(dst), max_retries=5, initial_delay=0.01)
+
+    assert attempts[0] == 3
+    assert dst.read_text() == "retried content"

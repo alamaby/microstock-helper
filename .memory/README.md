@@ -1,10 +1,11 @@
 # Project Memory Index
 
 - **Format Version**: 1.0.0
-- **Last Updated**: 2026-11-06 02:23:00 +07:00
+- **Last Updated**: 2026-11-06 02:37:00 +07:00
 
 ## Current State
 - Seluruh fungsionalitas otomasi microstock (utilitas raster, renumbering, upscaler, tracer vektor, vector render/convert, embedder ExifTool/SVG XML, dan orkestrator pipeline multi-platform) telah dikonsolidasikan ke dalam satu paket aplikasi Python terpadu (`microstock-helper` / `microstock`).
+- Penulisan berkas atomik (`metadata.json`, `metadata.csv`, `checkpoint.json`, berkas raster/vektor) diproteksi menggunakan `safe_replace` dengan retry backoff guna menangani file lock transien Windows (`WinError 5` / `WinError 32` dari antivirus/indexer).
 - Seluruh pemanggilan binary eksternal (`upscayl`, `vtracer`, `inkscape`, `ffmpeg`/`ffprobe`, `exiftool`) via subprocess telah diproteksi dengan `encoding="utf-8", errors="replace"` serta global UTF-8 Mode (`PYTHONUTF8=1`) di `run.bat` guna mencegah crash `UnicodeDecodeError` / `cp1252 charmap` pada Windows.
 - Dokumentasi `README.md` telah diperbarui sepenuhnya ke dalam Bahasa Inggris standar dengan diagram alur dan panduan multi-account Cloudflare yang komprehensif.
 - CLI terpadu dilengkapi startup preflight dependency check yang otomatis memverifikasi keberadaan `exiftool`, `upscayl`, `vtracer`, `inkscape`, `ffmpeg`, `ffprobe`, dan status API token sebelum tugas pipeline dijalankan.
@@ -32,6 +33,7 @@
 - Pengunggahan ke portal Pixabay memerlukan centang manual `AI-generated` dan pengisian tag melalui UI.
 
 ## Recent Entries
+- [2026-11-06 02:37:00 — Fix Metadata Atomic Write Windows File Lock (WinError 5 Access is Denied)](file:///C:/Side/Microstock/.memory/2026-11-06/023700-fix-metadata-atomic-write-winerror-5-access-denied.md)
 - [2026-11-06 02:23:00 — Fix Upscaler and External Subprocess UnicodeDecodeError (cp1252 charmap)](file:///C:/Side/Microstock/.memory/2026-11-06/022300-fix-upscaler-subprocess-charmap-decode-error.md)
 - [2026-11-04 14:08:00 — Translate README to English & Document Multi-Account Capabilities](file:///C:/Side/Microstock/.memory/2026-11-04/140800-translate-readme-to-english.md)
 - [2026-11-03 23:05:00 — Implement Cloudflare Workers AI Multi-Account and Key Rotation](file:///C:/Side/Microstock/.memory/2026-11-03/230500-cloudflare-multi-account-rotation.md)

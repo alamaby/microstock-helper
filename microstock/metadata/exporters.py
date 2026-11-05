@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 
 from .constants import SCHEMA_VERSION
@@ -17,8 +18,36 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def safe_replace(src: str, dst: str, max_retries: int = 10, initial_delay: float = 0.05) -> None:
+    """Atomically replace dst with src on Windows/POSIX, retrying transient locks.
+
+    On Windows, antivirus/file indexers or background processes can momentarily lock
+    recently written files, triggering [WinError 5] Access is denied or
+    [WinError 32] Sharing violation on os.replace.
+    """
+    delay = initial_delay
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as exc:
+            last_exc = exc
+            if attempt == max_retries - 1:
+                try:
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    os.replace(src, dst)
+                    return
+                except Exception:
+                    raise last_exc
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+
+
 def _atomic_write_text(path: str, text: str, encoding: str = "utf-8") -> None:
     directory = os.path.dirname(path) or "."
+    tmp = None
     try:
         os.makedirs(directory, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
@@ -26,9 +55,16 @@ def _atomic_write_text(path: str, text: str, encoding: str = "utf-8") -> None:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        safe_replace(tmp, path)
+        tmp = None
     except OSError as exc:
         raise ExportError(f"Cannot write {path}: {exc}") from exc
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def summarize(results: list[ProcessingResult]) -> dict:

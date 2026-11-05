@@ -3,9 +3,32 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 from PIL import Image
+
+
+def safe_replace(src: str, dst: str, max_retries: int = 10, initial_delay: float = 0.05) -> None:
+    """Atomically replace dst with src on Windows/POSIX, retrying transient locks."""
+    delay = initial_delay
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as exc:
+            last_exc = exc
+            if attempt == max_retries - 1:
+                try:
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    os.replace(src, dst)
+                    return
+                except Exception:
+                    raise last_exc
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
 
 
 def is_jpeg_bytes(path: str) -> bool:

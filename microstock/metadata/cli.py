@@ -283,12 +283,16 @@ def cmd_generate(args: argparse.Namespace) -> int:
         try:
             _flush_outputs(results, cfg, prompt_version)
         except ExportError as exc:
-            print(f"Output error: {exc}", file=sys.stderr)
-            return EXIT_OUTPUT_ERROR
+            logger.warning("Intermediate output flush warning: %s", exc)
         cleanup_memory(device_used)
     gc.collect()
 
     bar.finish()
+    try:
+        _flush_outputs(results, cfg, prompt_version)
+    except ExportError as exc:
+        print(f"Output error: {exc}", file=sys.stderr)
+        return EXIT_OUTPUT_ERROR
     from .exporters import summarize
 
     summary = summarize(results)

@@ -61,9 +61,8 @@ def convert_svg_to_eps(
             os.remove(temp_eps)
         raise RuntimeError(f"Inkscape EPS conversion failed for {svg_path}: {err_msg}")
 
-    if os.path.isfile(eps_path):
-        os.remove(eps_path)
-    os.rename(temp_eps, eps_path)
+    from .image_ops import safe_replace
+    safe_replace(temp_eps, eps_path)
 
     return eps_path
 

@@ -52,6 +52,7 @@ class CheckpointStore:
 
     def _persist(self) -> None:
         directory = os.path.dirname(self.path) or "."
+        tmp = None
         try:
             os.makedirs(directory, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
@@ -59,6 +60,14 @@ class CheckpointStore:
                 json.dump(self.state, fh, ensure_ascii=False, indent=2)
                 fh.flush()
                 os.fsync(fh.fileno())
-            os.replace(tmp, self.path)
+            from .exporters import safe_replace
+            safe_replace(tmp, self.path)
+            tmp = None
         except OSError as exc:
             raise CheckpointError(f"Cannot persist checkpoint: {exc}") from exc
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass

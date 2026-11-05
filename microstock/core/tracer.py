@@ -61,9 +61,8 @@ def trace_image_to_svg(
             os.remove(temp_out)
         raise RuntimeError(f"vtracer failed for {input_path} (exit code {result.returncode}): {err_msg}")
 
-    if os.path.isfile(output_path):
-        os.remove(output_path)
-    os.rename(temp_out, output_path)
+    from .image_ops import safe_replace
+    safe_replace(temp_out, output_path)
 
     return output_path
 

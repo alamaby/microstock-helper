@@ -29,6 +29,9 @@ class DummyResponse:
 
 
 def test_resolve_credentials_single(monkeypatch):
+    monkeypatch.setattr(api, "ensure_dotenv_loaded", lambda: None)
+    monkeypatch.delenv("MICROSTOCK_CF_ACCOUNTS", raising=False)
+    monkeypatch.delenv("MICROSTOCK_CF_CREDENTIALS", raising=False)
     monkeypatch.setenv("TEST_ACC", "acc_alpha")
     monkeypatch.setenv("TEST_KEY", "tok_alpha")
     creds = api.resolve_api_credentials(key_env="TEST_KEY", account_env="TEST_ACC")
@@ -36,6 +39,9 @@ def test_resolve_credentials_single(monkeypatch):
 
 
 def test_resolve_credentials_parallel_lists(monkeypatch):
+    monkeypatch.setattr(api, "ensure_dotenv_loaded", lambda: None)
+    monkeypatch.delenv("MICROSTOCK_CF_ACCOUNTS", raising=False)
+    monkeypatch.delenv("MICROSTOCK_CF_CREDENTIALS", raising=False)
     monkeypatch.setenv("TEST_ACC", "acc_1, acc_2, acc_3")
     monkeypatch.setenv("TEST_KEY", "tok_1, tok_2, tok_3")
     creds = api.resolve_api_credentials(key_env="TEST_KEY", account_env="TEST_ACC")

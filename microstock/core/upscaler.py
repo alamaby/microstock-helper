@@ -83,11 +83,10 @@ def upscale_image(
             raise RuntimeError(f"Upscayl failed (exit code {result.returncode}): {err_msg}")
 
         # Atomic copy back to destination
+        from .image_ops import safe_replace
         tmp_final = f"{output_path}.tmp"
         shutil.copy2(short_out, tmp_final)
-        if os.path.isfile(output_path):
-            os.remove(output_path)
-        os.rename(tmp_final, output_path)
+        safe_replace(tmp_final, output_path)
 
     return output_path
 
